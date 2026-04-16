@@ -125,3 +125,47 @@ export const LOSS_REASON_LABELS: Record<LossReason, string> = {
   not_serious: 'Not Serious Buyer',
   other: 'Other',
 };
+
+// ===== Re-engagement Triggers =====
+export type ReEngagementTrigger = 'lead_cold' | 'no_response_3d' | 'no_response_5d' | 'sla_breach' | 'stage_stuck' | 'noshow' | 'proposal_not_opened';
+
+export type ReEngagementAction = 'send_wa_template' | 'schedule_call' | 'send_email' | 'assign_to_senior';
+
+export interface ReEngagementRule {
+  id: string;
+  name: string;
+  trigger: ReEngagementTrigger;
+  triggerLabel: string;
+  conditions: {
+    daysSinceContact?: number;
+    temperature?: LeadTemperature;
+    minScore?: number;
+    maxScore?: number;
+    tracks?: string[];
+    stages?: string[];
+  };
+  actions: {
+    type: ReEngagementAction;
+    label: string;
+    templateName?: string;
+    delay?: number;
+    delayUnit?: 'minutes' | 'hours' | 'days';
+  }[];
+  enabled: boolean;
+  totalTriggered: number;
+  successRate: number; // 0-100
+  lastTriggered: string | null;
+  createdAt: string;
+}
+
+export interface ReEngagementLog {
+  id: string;
+  ruleId: string;
+  ruleName: string;
+  leadId: string;
+  leadName: string;
+  trigger: ReEngagementTrigger;
+  actionsExecuted: { type: ReEngagementAction; label: string; status: 'success' | 'failed' | 'pending' }[];
+  outcome: 'responded' | 'no_response' | 'pending' | 'converted';
+  triggeredAt: string;
+}
