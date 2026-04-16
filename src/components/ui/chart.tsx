@@ -103,12 +103,12 @@ const ChartTooltipContent = React.forwardRef<
   (
     {
       active,
-      payload,
+      payload = [] as any[],
       className,
       indicator = "dot",
       hideLabel = false,
       hideIndicator = false,
-      label,
+      label = "" as any,
       labelFormatter,
       labelClassName,
       formatter,
@@ -230,7 +230,7 @@ const ChartLegend = RechartsPrimitive.Legend;
 const ChartLegendContent = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div"> &
-    Pick<RechartsPrimitive.LegendProps, "payload" | "verticalAlign"> & {
+    { payload?: any[]; verticalAlign?: "top" | "bottom" } & {
       hideIcon?: boolean;
       nameKey?: string;
     }
