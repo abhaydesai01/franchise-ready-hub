@@ -4,6 +4,7 @@ import { LeadDrawer } from '@/components/crm/LeadDrawer';
 import { ScoreBadge } from '@/components/crm/ScoreBadge';
 import { TrackPill } from '@/components/crm/TrackPill';
 import { StagePill } from '@/components/crm/StagePill';
+import { LeadHealthBadge, SLABadge } from '@/components/crm/LeadHealthBadge';
 import { SkeletonTable } from '@/components/crm/SkeletonCard';
 import { EmptyState } from '@/components/crm/EmptyState';
 import { Input } from '@/components/ui/input';
@@ -11,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
 import { Search, Filter, Download, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getLeadHealth } from '@/lib/salesMockData';
 
 export default function Leads() {
   const [search, setSearch] = useState('');
@@ -74,17 +76,19 @@ export default function Leads() {
                   onCheckedChange={toggleAll} />
               </TableHead>
               <TableHead className="text-[11px] font-semibold uppercase text-brand-muted tracking-wider">Name</TableHead>
+              <TableHead className="text-[11px] font-semibold uppercase text-brand-muted tracking-wider">Health</TableHead>
               <TableHead className="text-[11px] font-semibold uppercase text-brand-muted tracking-wider">Phone</TableHead>
               <TableHead className="text-[11px] font-semibold uppercase text-brand-muted tracking-wider">Track</TableHead>
               <TableHead className="text-[11px] font-semibold uppercase text-brand-muted tracking-wider">Stage</TableHead>
               <TableHead className="text-[11px] font-semibold uppercase text-brand-muted tracking-wider">Score</TableHead>
+              <TableHead className="text-[11px] font-semibold uppercase text-brand-muted tracking-wider">SLA</TableHead>
               <TableHead className="text-[11px] font-semibold uppercase text-brand-muted tracking-wider">Last Activity</TableHead>
-              <TableHead className="text-[11px] font-semibold uppercase text-brand-muted tracking-wider">Added</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {leads.map((lead, i) => {
               const isSelected = selectedIds.includes(lead.id);
+              const health = getLeadHealth(lead.id);
               return (
                 <TableRow key={lead.id}
                   className={`cursor-pointer transition-colors ${isSelected ? 'bg-brand-crimson-lt' : i % 2 === 0 ? 'bg-white' : 'bg-[#FAFAF8]'} hover:bg-brand-surface`}
@@ -95,6 +99,9 @@ export default function Leads() {
                   </TableCell>
                   <TableCell className="text-[14px] font-semibold text-brand-ink">{lead.name}</TableCell>
                   <TableCell>
+                    {health ? <LeadHealthBadge temperature={health.temperature} /> : <span className="text-[11px] text-brand-muted">—</span>}
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-1.5">
                       <MessageCircle className="w-3 h-3 text-green-600" />
                       <span className="text-[13px] text-brand-text">{lead.phone}</span>
@@ -103,8 +110,10 @@ export default function Leads() {
                   <TableCell><TrackPill track={lead.track} /></TableCell>
                   <TableCell><StagePill stage={lead.stage} /></TableCell>
                   <TableCell><ScoreBadge score={lead.score} /></TableCell>
+                  <TableCell>
+                    {health ? <SLABadge state={health.sla.followUpState} compact /> : <span className="text-[11px] text-brand-muted">—</span>}
+                  </TableCell>
                   <TableCell className="text-[12px] text-brand-muted">{lead.lastActivity}</TableCell>
-                  <TableCell className="text-[12px] text-brand-muted">{lead.createdAt}</TableCell>
                 </TableRow>
               );
             })}
