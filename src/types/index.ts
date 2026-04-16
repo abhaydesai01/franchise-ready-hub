@@ -14,6 +14,89 @@ export interface ScoreDimension {
   max: number;
 }
 
+// Meta Ads campaign attribution
+export interface CampaignAttribution {
+  campaignId: string;
+  campaignName: string;
+  adsetId: string;
+  adsetName: string;
+  adId: string;
+  adName: string;
+  adCreativeUrl?: string; // thumbnail of the ad creative
+  platform: 'Facebook' | 'Instagram' | 'Messenger' | 'Audience Network';
+  objective: string; // e.g. 'LEAD_GENERATION', 'MESSAGES'
+  costPerLead?: number;
+  formId?: string; // Meta Lead Ads form ID
+  formName?: string;
+}
+
+// WhatsApp conversation
+export type WAMessageDirection = 'inbound' | 'outbound';
+export type WAMessageType = 'text' | 'image' | 'document' | 'template' | 'button_reply' | 'list_reply' | 'location' | 'contact';
+export type WAMessageStatus = 'sent' | 'delivered' | 'read' | 'failed';
+
+export interface WAMessage {
+  id: string;
+  leadId: string;
+  direction: WAMessageDirection;
+  type: WAMessageType;
+  body: string;
+  mediaUrl?: string;
+  templateName?: string;
+  status: WAMessageStatus;
+  timestamp: string;
+  agentName?: string; // who sent (for outbound)
+}
+
+export interface WAConversation {
+  leadId: string;
+  phoneNumber: string;
+  totalMessages: number;
+  lastMessageAt: string;
+  isActive: boolean;
+  messages: WAMessage[];
+}
+
+// Full funnel journey events
+export type JourneyEventType =
+  | 'ad_impression'
+  | 'ad_click'
+  | 'form_submitted' // Meta Lead Ads
+  | 'wa_opened'      // Click-to-WhatsApp
+  | 'wa_first_message'
+  | 'wa_agent_reply'
+  | 'wa_message_sent'
+  | 'wa_message_received'
+  | 'wa_template_sent'
+  | 'lead_created'
+  | 'lead_scored'
+  | 'track_assigned'
+  | 'stage_changed'
+  | 'call_booked'
+  | 'call_completed'
+  | 'call_noshow'
+  | 'proposal_sent'
+  | 'proposal_opened'
+  | 'proposal_signed'
+  | 'email_sent'
+  | 'email_opened'
+  | 'note_added'
+  | 'client_signed'
+  | 'sequence_started'
+  | 'sequence_step';
+
+export interface JourneyEvent {
+  id: string;
+  leadId: string;
+  type: JourneyEventType;
+  title: string;
+  description: string;
+  timestamp: string;
+  metadata?: Record<string, string | number | boolean>;
+  source?: 'meta_ads' | 'whatsapp' | 'crm' | 'automation' | 'manual';
+  channel?: 'facebook' | 'instagram' | 'whatsapp' | 'email' | 'voice' | 'web';
+}
+
 export interface Lead {
   id: string;
   name: string;
@@ -30,7 +113,14 @@ export interface Lead {
   createdAt: string;
   lastActivity: string;
   lastActivityType: string;
-  stageDuration: number; // days
+  stageDuration: number;
+  // Meta & WhatsApp enrichment
+  campaign?: CampaignAttribution;
+  waConversationId?: string;
+  metaLeadId?: string; // Meta's lead ID from Lead Ads
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
 }
 
 export interface Activity {
