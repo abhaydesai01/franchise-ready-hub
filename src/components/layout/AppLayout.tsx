@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import {
   LayoutDashboard, KanbanSquare, Users, Phone, FileText, Zap,
-  UserCheck, Settings, LogOut, Search, Plus, Menu, X
+  UserCheck, Settings, LogOut, Search, Plus, Menu, X, Bell,
+  BarChart3
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,11 +11,14 @@ import { NotificationDrawer } from '@/components/crm/NotificationDrawer';
 import { AddLeadModal } from '@/components/crm/AddLeadModal';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { salesAlerts } from '@/lib/salesMockData';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
   { icon: KanbanSquare, label: 'Pipeline', path: '/pipeline' },
   { icon: Users, label: 'Leads', path: '/leads' },
+  { icon: Bell, label: 'Alerts', path: '/alerts' },
+  { icon: BarChart3, label: 'Analytics', path: '/analytics' },
   { icon: Phone, label: 'Calls', path: '/calls' },
   { icon: FileText, label: 'Proposals', path: '/proposals' },
   { icon: Zap, label: 'Automation', path: '/automation' },
@@ -26,6 +30,8 @@ const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/pipeline': 'Pipeline',
   '/leads': 'Leads',
+  '/alerts': 'Sales Alerts',
+  '/analytics': 'Win/Loss Analytics',
   '/calls': 'Discovery Calls',
   '/proposals': 'Proposals',
   '/automation': 'Automation',
@@ -33,7 +39,6 @@ const pageTitles: Record<string, string> = {
   '/settings': 'Settings',
 };
 
-// Bottom tab bar shows top 5 items; rest accessible via "More" or header
 const mobileTabItems = navItems.slice(0, 5);
 
 interface AppLayoutProps {
@@ -43,58 +48,48 @@ interface AppLayoutProps {
 export function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const isMobile = useIsMobile(); // < 768px
+  const isMobile = useIsMobile();
   const [addLeadOpen, setAddLeadOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const currentPath = '/' + location.pathname.split('/')[1];
   const pageTitle = pageTitles[currentPath] || 'Franchise Ready';
 
-  // Mobile: bottom tab bar, no sidebar
-  // Tablet (md but not xl): icon-only sidebar (w-16)
-  // Desktop (xl+): full sidebar (w-[220px])
+  const criticalAlertCount = salesAlerts.filter(a => a.priority === 'critical' && !a.dismissed).length;
 
   return (
     <div className="flex min-h-screen bg-brand-surface">
-      {/* Mobile overlay for hamburger menu */}
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* Sidebar — hidden on mobile, icon-only on tablet (md-xl), full on desktop (xl+) */}
       <aside
         className={`
           fixed md:static inset-y-0 left-0 z-50 bg-brand-sidebar flex flex-col transition-all
-          ${/* Mobile: slide-in drawer */ ''}
           ${sidebarOpen ? 'translate-x-0 w-[220px]' : '-translate-x-full w-[220px]'}
-          ${/* Tablet: icon-only, always visible */ ''}
           md:translate-x-0 md:w-16
-          ${/* Desktop: full width */ ''}
           xl:w-[220px]
         `}
       >
-        {/* Logo */}
         <div className="h-16 flex items-center px-4 gap-2 xl:px-4 md:justify-center xl:justify-start">
           <span className="text-[14px] font-bold text-white hidden xl:inline">Franchise</span>
           <span className="text-[14px] font-bold text-brand-crimson hidden xl:inline">Ready</span>
           <span className="hidden xl:inline ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-brand-crimson text-white">CRM</span>
-          {/* Tablet: show just "FR" icon */}
           <span className="hidden md:flex xl:hidden w-8 h-8 rounded-lg bg-brand-crimson items-center justify-center text-white text-[11px] font-bold">FR</span>
-          {/* Mobile drawer: show full logo */}
           <span className="md:hidden text-[14px] font-bold text-white">Franchise</span>
           <span className="md:hidden text-[14px] font-bold text-brand-crimson">Ready</span>
         </div>
 
-        {/* Nav */}
         <nav className="flex-1 px-2 space-y-0.5 md:px-1 xl:px-2">
           {navItems.map(item => {
             const isActive = currentPath === item.path;
+            const isAlerts = item.path === '/alerts';
             return (
               <Tooltip key={item.path} delayDuration={0}>
                 <TooltipTrigger asChild>
                   <Link
                     to={item.path}
                     onClick={() => setSidebarOpen(false)}
-                    className={`flex items-center gap-3 h-10 rounded-md text-[11px] font-medium uppercase tracking-[0.08em] transition-colors
+                    className={`relative flex items-center gap-3 h-10 rounded-md text-[11px] font-medium uppercase tracking-[0.08em] transition-colors
                       px-4 md:px-0 md:justify-center xl:px-4 xl:justify-start
                       ${isActive
                         ? 'text-white bg-brand-crimson/10 border-l-[3px] border-brand-crimson md:border-l-0 md:bg-brand-crimson/20 xl:border-l-[3px]'
@@ -103,9 +98,14 @@ export function AppLayout({ children }: AppLayoutProps) {
                   >
                     <item.icon className="w-4 h-4 flex-shrink-0" />
                     <span className="md:hidden xl:inline">{item.label}</span>
+                    {/* Alert badge */}
+                    {isAlerts && criticalAlertCount > 0 && (
+                      <span className="absolute top-1 right-1 md:top-0.5 md:right-0.5 xl:static xl:ml-auto flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold animate-pulse">
+                        {criticalAlertCount}
+                      </span>
+                    )}
                   </Link>
                 </TooltipTrigger>
-                {/* Tooltip only on tablet icon-only mode */}
                 <TooltipContent side="right" className="hidden md:block xl:hidden">
                   {item.label}
                 </TooltipContent>
@@ -114,7 +114,6 @@ export function AppLayout({ children }: AppLayoutProps) {
           })}
         </nav>
 
-        {/* Bottom user */}
         <div className="px-4 py-4 border-t border-white/10 md:px-2 xl:px-4">
           <div className="flex items-center gap-3 md:justify-center xl:justify-start">
             <div className="w-8 h-8 rounded-full bg-brand-crimson flex items-center justify-center text-white text-[12px] font-semibold flex-shrink-0">
@@ -131,11 +130,8 @@ export function AppLayout({ children }: AppLayoutProps) {
         </div>
       </aside>
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
         <header className="h-14 bg-white border-b border-brand-border flex items-center px-4 gap-4 sticky top-0 z-30">
-          {/* Hamburger: only on mobile (< md) */}
           <button onClick={() => setSidebarOpen(true)} className="md:hidden p-2 hover:bg-brand-surface rounded">
             <Menu className="w-5 h-5 text-brand-text" />
           </button>
@@ -150,6 +146,18 @@ export function AppLayout({ children }: AppLayoutProps) {
             </div>
           </div>
           <div className="flex items-center gap-2 ml-auto">
+            {/* Alert bell in header */}
+            <button
+              onClick={() => navigate('/alerts')}
+              className="relative p-2 hover:bg-brand-surface rounded-lg transition-colors"
+            >
+              <Bell className="w-5 h-5 text-brand-muted" />
+              {criticalAlertCount > 0 && (
+                <span className="absolute top-1 right-1 flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold">
+                  {criticalAlertCount}
+                </span>
+              )}
+            </button>
             <NotificationDrawer />
             <Button onClick={() => setAddLeadOpen(true)}
               className="bg-brand-crimson hover:bg-brand-crimson-dk text-white rounded-lg px-4 h-9 text-[13px] font-medium gap-1.5">
@@ -159,26 +167,30 @@ export function AppLayout({ children }: AppLayoutProps) {
           </div>
         </header>
 
-        {/* Page content — add bottom padding on mobile for tab bar */}
         <main className="flex-1 p-4 sm:p-6 pb-20 md:pb-6">
           {children}
         </main>
       </div>
 
-      {/* Mobile bottom tab bar */}
       <nav className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-brand-sidebar border-t border-white/10 flex items-center justify-around h-16 px-1">
         {mobileTabItems.map(item => {
           const isActive = currentPath === item.path;
+          const isAlerts = item.path === '/alerts';
           return (
             <Link
               key={item.path}
               to={item.path}
-              className={`flex flex-col items-center justify-center gap-1 flex-1 h-full transition-colors ${
+              className={`relative flex flex-col items-center justify-center gap-1 flex-1 h-full transition-colors ${
                 isActive ? 'text-brand-crimson' : 'text-white/60'
               }`}
             >
               <item.icon className="w-5 h-5" />
               <span className="text-[10px] font-medium">{item.label}</span>
+              {isAlerts && criticalAlertCount > 0 && (
+                <span className="absolute top-2 right-1/4 w-3.5 h-3.5 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center">
+                  {criticalAlertCount}
+                </span>
+              )}
             </Link>
           );
         })}

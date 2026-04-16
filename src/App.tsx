@@ -13,6 +13,8 @@ import Proposals from "@/pages/Proposals";
 import Automation from "@/pages/Automation";
 import Clients from "@/pages/Clients";
 import SettingsPage from "@/pages/Settings";
+import Alerts from "@/pages/Alerts";
+import Analytics from "@/pages/Analytics";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/NotFound";
 
@@ -31,6 +33,8 @@ const App = () => (
           <Route path="/pipeline" element={<AppLayout><Pipeline /></AppLayout>} />
           <Route path="/leads" element={<AppLayout><Leads /></AppLayout>} />
           <Route path="/leads/:id" element={<AppLayout><LeadProfile /></AppLayout>} />
+          <Route path="/alerts" element={<AppLayout><Alerts /></AppLayout>} />
+          <Route path="/analytics" element={<AppLayout><Analytics /></AppLayout>} />
           <Route path="/calls" element={<AppLayout><Calls /></AppLayout>} />
           <Route path="/proposals" element={<AppLayout><Proposals /></AppLayout>} />
           <Route path="/automation" element={<AppLayout><Automation /></AppLayout>} />
