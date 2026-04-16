@@ -4,11 +4,16 @@ import { useState } from 'react';
 import { ArrowLeft, Phone, FileText, ChevronDown, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScoreBadge } from '@/components/crm/ScoreBadge';
 import { TrackPill } from '@/components/crm/TrackPill';
 import { StagePill } from '@/components/crm/StagePill';
 import { ActivityFeed } from '@/components/crm/ActivityFeed';
+import { JourneyTimeline } from '@/components/crm/JourneyTimeline';
+import { WhatsAppChat } from '@/components/crm/WhatsAppChat';
+import { CampaignCard } from '@/components/crm/CampaignCard';
 import { SkeletonCard } from '@/components/crm/SkeletonCard';
+import { getLeadJourney, getLeadConversation, getLeadCampaign } from '@/lib/journeyMockData';
 import { toast } from 'sonner';
 
 export default function LeadProfile() {
@@ -19,7 +24,11 @@ export default function LeadProfile() {
   const addNote = useAddLeadNote();
   const [noteText, setNoteText] = useState('');
 
-  if (isLoading) return <div className="max-w-4xl mx-auto space-y-4"><SkeletonCard /><SkeletonCard /><SkeletonCard /></div>;
+  const journeyEvents = id ? getLeadJourney(id) : [];
+  const conversation = id ? getLeadConversation(id) : undefined;
+  const campaign = id ? getLeadCampaign(id) : undefined;
+
+  if (isLoading) return <div className="max-w-5xl mx-auto space-y-4"><SkeletonCard /><SkeletonCard /><SkeletonCard /></div>;
   if (!lead) return <div className="text-center py-16 text-brand-muted">Lead not found</div>;
 
   const handleAddNote = async () => {
@@ -30,7 +39,7 @@ export default function LeadProfile() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="gap-1.5">
@@ -41,9 +50,15 @@ export default function LeadProfile() {
         <div className="flex items-start justify-between mb-4">
           <div>
             <h1 className="text-[22px] font-bold text-brand-ink">{lead.name}</h1>
-            <div className="flex gap-2 mt-1">
+            <div className="flex gap-2 mt-1 flex-wrap">
               <TrackPill track={lead.track} />
               <StagePill stage={lead.stage} />
+              {lead.source === 'Meta Ad' && (
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Meta Ad</span>
+              )}
+              {lead.source === 'WhatsApp Inbound' && (
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">WhatsApp</span>
+              )}
             </div>
           </div>
           <ScoreBadge score={lead.score} size="md" />
@@ -61,9 +76,9 @@ export default function LeadProfile() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column */}
-        <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {/* Left Column — 2/5 */}
+        <div className="lg:col-span-2 space-y-6">
           {/* Contact */}
           <div className="bg-white rounded-[10px] border border-brand-border p-6">
             <h3 className="text-[15px] font-semibold text-brand-ink mb-4">Contact info</h3>
@@ -115,24 +130,55 @@ export default function LeadProfile() {
               ))}
             </div>
           </div>
+
+          {/* Campaign Attribution */}
+          {campaign && <CampaignCard campaign={campaign} />}
         </div>
 
-        {/* Right Column */}
-        <div className="space-y-6">
+        {/* Right Column — 3/5 */}
+        <div className="lg:col-span-3 space-y-6">
           <div className="bg-white rounded-[10px] border border-brand-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[15px] font-semibold text-brand-ink">Activity</h3>
-              <span className="text-[12px] px-2 py-0.5 rounded-full bg-brand-surface text-brand-muted">{activities.length}</span>
-            </div>
-            <div className="flex gap-2 mb-4">
-              <Textarea value={noteText} onChange={e => setNoteText(e.target.value)}
-                placeholder="Log a note..." className="text-[13px] border-brand-border min-h-[60px]" rows={2} />
-              <Button onClick={handleAddNote} disabled={!noteText.trim()}
-                className="bg-brand-crimson hover:bg-brand-crimson-dk text-white text-[12px] px-3 self-end">
-                Log
-              </Button>
-            </div>
-            <ActivityFeed activities={activities} />
+            <Tabs defaultValue={journeyEvents.length > 0 ? 'journey' : 'activity'}>
+              <TabsList className="bg-brand-surface mb-4">
+                {journeyEvents.length > 0 && (
+                  <TabsTrigger value="journey" className="text-[12px]">
+                    Journey ({journeyEvents.length})
+                  </TabsTrigger>
+                )}
+                <TabsTrigger value="activity" className="text-[12px]">
+                  Activity ({activities.length})
+                </TabsTrigger>
+                {conversation && (
+                  <TabsTrigger value="whatsapp" className="text-[12px]">
+                    WhatsApp ({conversation.totalMessages})
+                  </TabsTrigger>
+                )}
+              </TabsList>
+
+              {journeyEvents.length > 0 && (
+                <TabsContent value="journey" className="mt-0">
+                  <JourneyTimeline events={journeyEvents} />
+                </TabsContent>
+              )}
+
+              <TabsContent value="activity" className="mt-0">
+                <div className="flex gap-2 mb-4">
+                  <Textarea value={noteText} onChange={e => setNoteText(e.target.value)}
+                    placeholder="Log a note..." className="text-[13px] border-brand-border min-h-[60px]" rows={2} />
+                  <Button onClick={handleAddNote} disabled={!noteText.trim()}
+                    className="bg-brand-crimson hover:bg-brand-crimson-dk text-white text-[12px] px-3 self-end">
+                    Log
+                  </Button>
+                </div>
+                <ActivityFeed activities={activities} />
+              </TabsContent>
+
+              {conversation && (
+                <TabsContent value="whatsapp" className="mt-0">
+                  <WhatsAppChat conversation={conversation} />
+                </TabsContent>
+              )}
+            </Tabs>
           </div>
         </div>
       </div>

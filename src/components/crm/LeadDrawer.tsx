@@ -3,11 +3,16 @@ import { X, Phone, FileText, ChevronDown, MessageCircle } from 'lucide-react';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScoreBadge } from './ScoreBadge';
 import { TrackPill } from './TrackPill';
 import { StagePill } from './StagePill';
 import { ActivityFeed } from './ActivityFeed';
+import { JourneyTimeline } from './JourneyTimeline';
+import { WhatsAppChat } from './WhatsAppChat';
+import { CampaignCard } from './CampaignCard';
 import { useLead, useLeadActivity, useAddLeadNote } from '@/hooks/useLeads';
+import { getLeadJourney, getLeadConversation, getLeadCampaign } from '@/lib/journeyMockData';
 import { toast } from 'sonner';
 
 interface LeadDrawerProps {
@@ -21,6 +26,10 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
   const { data: activities = [] } = useLeadActivity(leadId || '');
   const addNote = useAddLeadNote();
   const [noteText, setNoteText] = useState('');
+
+  const journeyEvents = leadId ? getLeadJourney(leadId) : [];
+  const conversation = leadId ? getLeadConversation(leadId) : undefined;
+  const campaign = leadId ? getLeadCampaign(leadId) : undefined;
 
   if (!lead) return null;
 
@@ -39,9 +48,15 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
           <div className="flex items-start justify-between mb-3">
             <div>
               <h2 className="text-[20px] font-bold text-brand-ink">{lead.name}</h2>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <TrackPill track={lead.track} />
                 <StagePill stage={lead.stage} />
+                {lead.source === 'Meta Ad' && (
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Meta Ad</span>
+                )}
+                {lead.source === 'WhatsApp Inbound' && (
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">WhatsApp</span>
+                )}
               </div>
             </div>
             <button onClick={() => onOpenChange(false)} className="p-1 hover:bg-brand-surface rounded">
@@ -118,26 +133,57 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
             </div>
           </div>
 
-          {/* Activity Timeline */}
+          {/* Campaign Attribution */}
+          {campaign && <CampaignCard campaign={campaign} />}
+
+          {/* Tabbed content: Journey / Activity / WhatsApp */}
           <div className="bg-white rounded-[10px] border border-brand-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[15px] font-semibold text-brand-ink">Activity</h3>
-              <span className="text-[12px] px-2 py-0.5 rounded-full bg-brand-surface text-brand-muted">{activities.length}</span>
-            </div>
-            <div className="flex gap-2 mb-4">
-              <Textarea
-                value={noteText}
-                onChange={e => setNoteText(e.target.value)}
-                placeholder="Log a note..."
-                className="text-[13px] border-brand-border focus:border-brand-crimson min-h-[60px]"
-                rows={2}
-              />
-              <Button onClick={handleAddNote} disabled={!noteText.trim() || addNote.isPending}
-                className="bg-brand-crimson hover:bg-brand-crimson-dk text-white text-[12px] px-3 self-end">
-                Log
-              </Button>
-            </div>
-            <ActivityFeed activities={activities} />
+            <Tabs defaultValue={journeyEvents.length > 0 ? 'journey' : 'activity'}>
+              <TabsList className="bg-brand-surface mb-4">
+                {journeyEvents.length > 0 && (
+                  <TabsTrigger value="journey" className="text-[12px]">
+                    Journey ({journeyEvents.length})
+                  </TabsTrigger>
+                )}
+                <TabsTrigger value="activity" className="text-[12px]">
+                  Activity ({activities.length})
+                </TabsTrigger>
+                {conversation && (
+                  <TabsTrigger value="whatsapp" className="text-[12px]">
+                    WhatsApp ({conversation.totalMessages})
+                  </TabsTrigger>
+                )}
+              </TabsList>
+
+              {journeyEvents.length > 0 && (
+                <TabsContent value="journey" className="mt-0">
+                  <JourneyTimeline events={journeyEvents} />
+                </TabsContent>
+              )}
+
+              <TabsContent value="activity" className="mt-0">
+                <div className="flex gap-2 mb-4">
+                  <Textarea
+                    value={noteText}
+                    onChange={e => setNoteText(e.target.value)}
+                    placeholder="Log a note..."
+                    className="text-[13px] border-brand-border focus:border-brand-crimson min-h-[60px]"
+                    rows={2}
+                  />
+                  <Button onClick={handleAddNote} disabled={!noteText.trim() || addNote.isPending}
+                    className="bg-brand-crimson hover:bg-brand-crimson-dk text-white text-[12px] px-3 self-end">
+                    Log
+                  </Button>
+                </div>
+                <ActivityFeed activities={activities} />
+              </TabsContent>
+
+              {conversation && (
+                <TabsContent value="whatsapp" className="mt-0">
+                  <WhatsAppChat conversation={conversation} />
+                </TabsContent>
+              )}
+            </Tabs>
           </div>
         </div>
       </SheetContent>
