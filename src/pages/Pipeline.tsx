@@ -1,15 +1,27 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useLeads, useUpdateLeadStage } from '@/hooks/useLeads';
 import { LeadCard } from '@/components/crm/LeadCard';
 import { LeadDrawer } from '@/components/crm/LeadDrawer';
 import { SkeletonCard } from '@/components/crm/SkeletonCard';
-import { EmptyState } from '@/components/crm/EmptyState';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { getTrackColors } from '@/lib/utils';
 import type { Lead, Track, Stage } from '@/types';
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+  type DragStartEvent,
+  type DragEndEvent,
+  type DragOverEvent,
+} from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { useDroppable } from '@dnd-kit/core';
+import { CSS } from '@dnd-kit/utilities';
 
 interface TrackConfig {
   track: Track;
@@ -22,6 +34,41 @@ const trackConfigs: TrackConfig[] = [
   { track: 'Recruitment Only', stages: ['Routed to Eden'] },
 ];
 
+// Build a lookup: stage → track
+const stageToTrack: Record<string, Track> = {};
+trackConfigs.forEach(tc => tc.stages.forEach(s => { stageToTrack[s] = tc.track; }));
+
+function DroppableColumn({ id, children }: { id: string; children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`min-h-[120px] rounded-lg transition-colors ${isOver ? 'bg-brand-crimson/5 ring-1 ring-brand-crimson/20' : ''}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SortableLeadCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: lead.id,
+    data: { lead },
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <LeadCard lead={lead} onClick={onClick} isDragging={isDragging} />
+    </div>
+  );
+}
+
 export default function Pipeline() {
   const { data, isLoading } = useLeads();
   const updateStage = useUpdateLeadStage();
@@ -31,6 +78,11 @@ export default function Pipeline() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeDragLead, setActiveDragLead] = useState<Lead | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
 
   const leads = data?.leads || [];
 
@@ -52,12 +104,57 @@ export default function Pipeline() {
     'Recruitment Only': leads.filter(l => l.track === 'Recruitment Only').length,
   }), [leads]);
 
-  const getLeadsForStage = (track: Track, stage: Stage) =>
-    filteredLeads.filter(l => l.track === track && l.stage === stage);
+  const getLeadsForStage = useCallback((track: Track, stage: Stage) =>
+    filteredLeads.filter(l => l.track === track && l.stage === stage),
+    [filteredLeads]
+  );
 
   const openLead = (lead: Lead) => {
     setSelectedLeadId(lead.id);
     setDrawerOpen(true);
+  };
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const lead = event.active.data.current?.lead as Lead | undefined;
+    if (lead) setActiveDragLead(lead);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveDragLead(null);
+    const { active, over } = event;
+    if (!over) return;
+
+    const draggedLead = active.data.current?.lead as Lead | undefined;
+    if (!draggedLead) return;
+
+    // The droppable id is "track::stage"
+    const overId = over.id as string;
+    const [targetTrack, targetStage] = overId.includes('::')
+      ? overId.split('::')
+      : [stageToTrack[overId] || draggedLead.track, overId];
+
+    // If dropped on another lead card, find which column it belongs to
+    if (!overId.includes('::')) {
+      // Dropped on a lead — find the lead's stage
+      const targetLeadObj = leads.find(l => l.id === overId);
+      if (targetLeadObj) {
+        if (targetLeadObj.stage === draggedLead.stage && targetLeadObj.track === draggedLead.track) return;
+        updateStage.mutate({
+          id: draggedLead.id,
+          stage: targetLeadObj.stage,
+          track: targetLeadObj.track,
+        });
+        return;
+      }
+    }
+
+    if (targetStage === draggedLead.stage && targetTrack === draggedLead.track) return;
+
+    updateStage.mutate({
+      id: draggedLead.id,
+      stage: targetStage,
+      track: targetTrack,
+    });
   };
 
   if (isLoading) {
@@ -121,60 +218,78 @@ export default function Pipeline() {
         </div>
       </div>
 
-      {/* Kanban */}
-      {displayedTracks.map(tc => {
-        const colors = getTrackColors(tc.track);
-        const isCollapsed = collapsed[tc.track];
-        const trackLeadCount = filteredLeads.filter(l => l.track === tc.track).length;
+      {/* Kanban with DnD */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        {displayedTracks.map(tc => {
+          const colors = getTrackColors(tc.track);
+          const isCollapsed = collapsed[tc.track];
+          const trackLeadCount = filteredLeads.filter(l => l.track === tc.track).length;
 
-        return (
-          <div key={tc.track} className="space-y-3">
-            {/* Track header */}
-            <button
-              onClick={() => setCollapsed(prev => ({ ...prev, [tc.track]: !prev[tc.track] }))}
-              className="w-full flex items-center justify-between h-12 px-4 rounded-lg"
-              style={{ backgroundColor: colors.bg, borderBottom: `2px solid ${colors.border}` }}
-            >
-              <div className="flex items-center gap-3">
-                <span className="text-[14px] font-semibold" style={{ color: colors.text }}>{tc.track}</span>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/80 font-medium" style={{ color: colors.text }}>
-                  {trackLeadCount}
-                </span>
-              </div>
-              {isCollapsed ? <ChevronDown className="w-4 h-4" style={{ color: colors.text }} /> : <ChevronUp className="w-4 h-4" style={{ color: colors.text }} />}
-            </button>
+          return (
+            <div key={tc.track} className="space-y-3">
+              <button
+                onClick={() => setCollapsed(prev => ({ ...prev, [tc.track]: !prev[tc.track] }))}
+                className="w-full flex items-center justify-between h-12 px-4 rounded-lg"
+                style={{ backgroundColor: colors.bg, borderBottom: `2px solid ${colors.border}` }}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-[14px] font-semibold" style={{ color: colors.text }}>{tc.track}</span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/80 font-medium" style={{ color: colors.text }}>
+                    {trackLeadCount}
+                  </span>
+                </div>
+                {isCollapsed ? <ChevronDown className="w-4 h-4" style={{ color: colors.text }} /> : <ChevronUp className="w-4 h-4" style={{ color: colors.text }} />}
+              </button>
 
-            {!isCollapsed && (
-              <div className={`grid gap-3`} style={{ gridTemplateColumns: `repeat(${tc.stages.length}, minmax(220px, 1fr))` }}>
-                {tc.stages.map(stage => {
-                  const stageLeads = getLeadsForStage(tc.track, stage);
-                  return (
-                    <div key={stage} className="min-h-[120px]">
-                      <div className="flex items-center justify-between mb-2 px-1">
-                        <span className="text-[13px] font-semibold uppercase text-brand-muted">{stage}</span>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-brand-crimson text-white font-semibold">
-                          {stageLeads.length}
-                        </span>
-                      </div>
-                      <div className="space-y-2">
-                        {stageLeads.length === 0 ? (
-                          <div className="border border-dashed border-brand-border rounded-lg p-4 text-center">
-                            <span className="text-[12px] text-brand-muted">No leads</span>
+              {!isCollapsed && (
+                <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${tc.stages.length}, minmax(220px, 1fr))` }}>
+                  {tc.stages.map(stage => {
+                    const stageLeads = getLeadsForStage(tc.track, stage);
+                    const droppableId = `${tc.track}::${stage}`;
+
+                    return (
+                      <DroppableColumn key={stage} id={droppableId}>
+                        <div className="flex items-center justify-between mb-2 px-1">
+                          <span className="text-[13px] font-semibold uppercase text-brand-muted">{stage}</span>
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-brand-crimson text-white font-semibold">
+                            {stageLeads.length}
+                          </span>
+                        </div>
+                        <SortableContext items={stageLeads.map(l => l.id)} strategy={verticalListSortingStrategy}>
+                          <div className="space-y-2">
+                            {stageLeads.length === 0 ? (
+                              <div className="border border-dashed border-brand-border rounded-lg p-4 text-center">
+                                <span className="text-[12px] text-brand-muted">No leads</span>
+                              </div>
+                            ) : (
+                              stageLeads.map(lead => (
+                                <SortableLeadCard key={lead.id} lead={lead} onClick={() => openLead(lead)} />
+                              ))
+                            )}
                           </div>
-                        ) : (
-                          stageLeads.map(lead => (
-                            <LeadCard key={lead.id} lead={lead} onClick={() => openLead(lead)} />
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })}
+                        </SortableContext>
+                      </DroppableColumn>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <DragOverlay>
+          {activeDragLead ? (
+            <div className="w-[260px]">
+              <LeadCard lead={activeDragLead} isDragging />
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
 
       <LeadDrawer leadId={selectedLeadId} open={drawerOpen} onOpenChange={setDrawerOpen} />
     </div>
