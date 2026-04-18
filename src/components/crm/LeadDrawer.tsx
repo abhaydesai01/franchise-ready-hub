@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { X, Phone, FileText, ChevronDown, MessageCircle } from 'lucide-react';
+import { X, Phone, FileText, ChevronDown, MessageCircle, Video } from 'lucide-react';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScoreBadge } from './ScoreBadge';
 import { TrackPill } from './TrackPill';
 import { StagePill } from './StagePill';
@@ -11,9 +12,21 @@ import { ActivityFeed } from './ActivityFeed';
 import { JourneyTimeline } from './JourneyTimeline';
 import { WhatsAppChat } from './WhatsAppChat';
 import { CampaignCard } from './CampaignCard';
-import { useLead, useLeadActivity, useAddLeadNote } from '@/hooks/useLeads';
-import { getLeadJourney, getLeadConversation, getLeadCampaign } from '@/lib/journeyMockData';
+import { LeadBriefingTab } from './LeadBriefingTab';
+import { PostCallSection } from './PostCallSection';
+import { LeadDocumentsTab } from './LeadDocumentsTab';
+import type { Lead } from '@/types';
+import {
+  useLead,
+  useLeadActivity,
+  useAddLeadNote,
+  useUpdateLeadStage,
+  useLeadJourney,
+  useLeadConversation,
+} from '@/hooks/useLeads';
+import { usePipelineStages } from '@/hooks/usePipeline';
 import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
 
 interface LeadDrawerProps {
   leadId: string | null;
@@ -21,15 +34,31 @@ interface LeadDrawerProps {
   onOpenChange: (open: boolean) => void;
 }
 
+function leadShowsBriefingTab(lead: Lead): boolean {
+  const dc = lead.discoveryCall;
+  if (dc?.scheduledAt && dc?.status !== 'cancelled') return true;
+  const s = (lead.stage || '').toLowerCase();
+  if (s === 'call_booked') return true;
+  return ['discovery booked', 'reminders sent', 'proposal sent', 'signed'].includes(s);
+}
+
 export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
+  const navigate = useNavigate();
   const { data: lead } = useLead(leadId || '');
   const { data: activities = [] } = useLeadActivity(leadId || '');
+  const { data: journeyEvents = [] } = useLeadJourney(leadId || '');
+  const { data: conversation } = useLeadConversation(leadId || '');
+  const { data: stageRows = [] } = usePipelineStages(lead?.track);
   const addNote = useAddLeadNote();
+  const updateStage = useUpdateLeadStage();
   const [noteText, setNoteText] = useState('');
-
-  const journeyEvents = leadId ? getLeadJourney(leadId) : [];
-  const conversation = leadId ? getLeadConversation(leadId) : undefined;
-  const campaign = leadId ? getLeadCampaign(leadId) : undefined;
+  const campaign = lead?.campaign;
+  const showBriefing = lead ? leadShowsBriefingTab(lead) : false;
+  const showDocumentsTab = lead
+    ? (lead.documents?.length ?? 0) > 0 ||
+      lead.stage === 'post_call' ||
+      !!lead.callNotes?.submittedAt
+    : false;
 
   if (!lead) return null;
 
@@ -38,6 +67,20 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     await addNote.mutateAsync({ leadId: lead.id, text: noteText, addedBy: 't1' });
     setNoteText('');
     toast.success('Note added');
+  };
+
+  const trackStages = stageRows.filter((s) => s.track === lead.track && s.isActive);
+
+  const handleMoveStage = async (pipelineStageId: string) => {
+    const selected = trackStages.find((s) => s.id === pipelineStageId);
+    if (!selected) return;
+    await updateStage.mutateAsync({
+      id: lead.id,
+      stage: selected.name,
+      track: selected.track,
+      pipelineStageId: selected.id,
+    });
+    toast.success(`Moved to ${selected.name}`);
   };
 
   return (
@@ -64,15 +107,43 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
             </button>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="text-[12px] border-brand-border gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-[12px] border-brand-border gap-1.5"
+              onClick={() => {
+                onOpenChange(false);
+                navigate('/calls');
+              }}
+            >
               <Phone className="w-3.5 h-3.5" /> Book Call
             </Button>
-            <Button size="sm" className="text-[12px] bg-brand-crimson hover:bg-brand-crimson-dk text-white gap-1.5">
+            <Button
+              size="sm"
+              className="text-[12px] bg-brand-crimson hover:bg-brand-crimson-dk text-white gap-1.5"
+              onClick={() => {
+                onOpenChange(false);
+                navigate('/proposals');
+              }}
+            >
               <FileText className="w-3.5 h-3.5" /> Send Proposal
             </Button>
-            <Button variant="outline" size="sm" className="text-[12px] border-brand-border gap-1.5">
-              Move Stage <ChevronDown className="w-3 h-3" />
-            </Button>
+            <Select
+              value={lead.pipelineStageId ?? ''}
+              onValueChange={(v) => void handleMoveStage(v)}
+              disabled={updateStage.isPending || trackStages.length === 0}
+            >
+              <SelectTrigger className="h-8 w-[150px] text-[12px] border-brand-border">
+                <SelectValue placeholder="Move Stage" />
+              </SelectTrigger>
+              <SelectContent>
+                {trackStages.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -95,16 +166,101 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 <span className="text-[13px] text-brand-muted">Email</span>
                 <a href={`mailto:${lead.email}`} className="text-[13px] text-brand-crimson hover:underline">{lead.email}</a>
               </div>
+              {lead.company && (
+                <div className="flex justify-between">
+                  <span className="text-[13px] text-brand-muted">Company</span>
+                  <span className="text-[13px] text-brand-text">{lead.company}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-[13px] text-brand-muted">Source</span>
                 <span className="text-[12px] px-2 py-0.5 rounded-full bg-brand-surface text-brand-text">{lead.source}</span>
               </div>
+              {(lead.metaLeadId || lead.metaFormId || lead.utmSource || lead.utmMedium || lead.utmCampaign) && (
+                <>
+                  <div className="pt-2 border-t border-brand-border" />
+                  {lead.metaLeadId && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">Meta Lead ID</span>
+                      <span className="text-[11px] font-mono text-right break-all">{lead.metaLeadId}</span>
+                    </div>
+                  )}
+                  {lead.metaFormId && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">Meta Form ID</span>
+                      <span className="text-[11px] font-mono text-right break-all">{lead.metaFormId}</span>
+                    </div>
+                  )}
+                  {lead.utmSource && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">UTM Source</span>
+                      <span className="text-[12px] text-right">{lead.utmSource}</span>
+                    </div>
+                  )}
+                  {lead.utmMedium && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">UTM Medium</span>
+                      <span className="text-[12px] text-right">{lead.utmMedium}</span>
+                    </div>
+                  )}
+                  {lead.utmCampaign && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">UTM Campaign</span>
+                      <span className="text-[12px] text-right">{lead.utmCampaign}</span>
+                    </div>
+                  )}
+                </>
+              )}
               <div className="flex justify-between">
                 <span className="text-[13px] text-brand-muted">Added</span>
                 <span className="text-[13px] text-brand-text">{lead.createdAt}</span>
               </div>
             </div>
           </div>
+
+          {lead.discoveryCall &&
+            lead.discoveryCall.status !== 'cancelled' &&
+            (lead.discoveryCall.scheduledAt || lead.discoveryCall.meetLink || lead.discoveryCall.meetingLink) && (
+              <div className="bg-white rounded-[10px] border border-brand-border p-6">
+                <h3 className="text-[15px] font-semibold text-brand-ink mb-4">Discovery call</h3>
+                <div className="space-y-3 text-[13px]">
+                  {lead.discoveryCall.scheduledAt && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-brand-muted">Scheduled</span>
+                      <span className="text-brand-text text-right">
+                        {new Date(lead.discoveryCall.scheduledAt).toLocaleString('en-IN', {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        })}{' '}
+                        IST
+                      </span>
+                    </div>
+                  )}
+                  {(lead.discoveryCall.meetLink || lead.discoveryCall.meetingLink) && (
+                    <div className="flex justify-between gap-3 items-start">
+                      <span className="text-brand-muted shrink-0">Meet link</span>
+                      <a
+                        href={lead.discoveryCall.meetLink || lead.discoveryCall.meetingLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-brand-crimson hover:underline break-all text-right inline-flex items-start gap-1"
+                      >
+                        <Video className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        Join Google Meet
+                      </a>
+                    </div>
+                  )}
+                  {lead.discoveryCall.bookedVia && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-brand-muted">Booked via</span>
+                      <span className="text-[12px] text-brand-text capitalize">
+                        {lead.discoveryCall.bookedVia.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
           {/* Score Card */}
           <div className="bg-white rounded-[10px] border border-brand-border p-6">
@@ -136,10 +292,12 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
           {/* Campaign Attribution */}
           {campaign && <CampaignCard campaign={campaign} />}
 
+          <PostCallSection lead={lead} />
+
           {/* Tabbed content: Journey / Activity / WhatsApp */}
           <div className="bg-white rounded-[10px] border border-brand-border p-6">
             <Tabs defaultValue={journeyEvents.length > 0 ? 'journey' : 'activity'}>
-              <TabsList className="bg-brand-surface mb-4">
+              <TabsList className="bg-brand-surface mb-4 flex-wrap h-auto gap-1">
                 {journeyEvents.length > 0 && (
                   <TabsTrigger value="journey" className="text-[12px]">
                     Journey ({journeyEvents.length})
@@ -151,6 +309,16 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 {conversation && (
                   <TabsTrigger value="whatsapp" className="text-[12px]">
                     WhatsApp ({conversation.totalMessages})
+                  </TabsTrigger>
+                )}
+                {showBriefing && (
+                  <TabsTrigger value="briefing" className="text-[12px]">
+                    Briefing
+                  </TabsTrigger>
+                )}
+                {showDocumentsTab && (
+                  <TabsTrigger value="documents" className="text-[12px]">
+                    Documents ({lead.documents?.length ?? 0})
                   </TabsTrigger>
                 )}
               </TabsList>
@@ -181,6 +349,18 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
               {conversation && (
                 <TabsContent value="whatsapp" className="mt-0">
                   <WhatsAppChat conversation={conversation} />
+                </TabsContent>
+              )}
+
+              {showBriefing && (
+                <TabsContent value="briefing" className="mt-0">
+                  <LeadBriefingTab leadId={lead.id} />
+                </TabsContent>
+              )}
+
+              {showDocumentsTab && (
+                <TabsContent value="documents" className="mt-0">
+                  <LeadDocumentsTab lead={lead} />
                 </TabsContent>
               )}
             </Tabs>

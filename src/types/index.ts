@@ -3,7 +3,13 @@ export type Track = 'Not Ready' | 'Franchise Ready' | 'Recruitment Only';
 export type NotReadyStage = 'Gap Nurture' | 'Not Early' | 'Discovery Call' | 'Convert to Consulting';
 export type FranchiseReadyStage = 'Discovery Booked' | 'Reminders Sent' | 'Proposal Sent' | 'Signed';
 export type RecruitmentStage = 'Routed to Eden';
-export type Stage = NotReadyStage | FranchiseReadyStage | RecruitmentStage;
+/** Includes API stage from Calendly webhook (`call_booked`). */
+export type Stage =
+  | NotReadyStage
+  | FranchiseReadyStage
+  | RecruitmentStage
+  | 'call_booked'
+  | 'post_call';
 
 export type LeadStatus = 'New' | 'Scoring' | 'Nurture' | 'Active' | 'Signed' | 'Dead';
 export type Source = 'Meta Ad' | 'WhatsApp Inbound' | 'Referral' | 'Direct' | 'Other';
@@ -102,6 +108,7 @@ export interface Lead {
   name: string;
   phone: string;
   email: string;
+  company?: string;
   source: Source;
   track: Track;
   stage: Stage;
@@ -114,20 +121,115 @@ export interface Lead {
   lastActivity: string;
   lastActivityType: string;
   stageDuration: number;
+  /** Mongo pipeline stage id when loaded from the API */
+  pipelineStageId?: string;
   // Meta & WhatsApp enrichment
   campaign?: CampaignAttribution;
   waConversationId?: string;
   metaLeadId?: string; // Meta's lead ID from Lead Ads
+  metaFormId?: string;
   utmSource?: string;
   utmMedium?: string;
   utmCampaign?: string;
+  /** When set, discovery call is scheduled (Calendly, GHL, or CRM calendar engine). */
+  discoveryCall?: {
+    scheduledAt?: string;
+    endTime?: string;
+    meetingLink?: string;
+    meetLink?: string;
+    googleEventId?: string;
+    outlookEventId?: string;
+    status?: 'scheduled' | 'cancelled' | 'completed';
+    completedAt?: string;
+    bookedVia?: 'crm_bot' | 'crm_voice' | 'ghl_link';
+    reminderJobIds?: string[];
+  };
+  callNotes?: PostCallNotes;
+  documents?: LeadDocumentEntry[];
+}
+
+export type LeadDocumentEntry = {
+  id: string;
+  type: 'proposal' | 'mom';
+  url: string;
+  generatedAt: string;
+  status: 'pending_review' | 'approved' | 'sent' | 'signed';
+  proposalViewCount?: number;
+  proposalLastViewedAt?: string;
+  signedAt?: string;
+};
+
+export interface PostCallNotes {
+  outcome: 'ready_to_proceed' | 'needs_more_time' | 'not_interested';
+  serviceType?: 'full_consulting' | 'recruitment_only' | 'needs_development';
+  engagementScope: string;
+  priceDiscussed?: number;
+  objections?: string;
+  commitments?: string;
+  consultantNotes: string;
+  docRequired: 'proposal' | 'mom' | 'none';
+  nextStep: string;
+  submittedAt?: string;
+}
+
+/** GET /leads/:id/briefing */
+export interface LeadBriefing {
+  leadProfile: {
+    name: string;
+    email: string | null;
+    phone: string | null;
+    company: string | null;
+    metaAdSource: string | null;
+    utmCampaign: string | null;
+    createdAt: string;
+  };
+  scorecardSummary: {
+    totalScore: number | null;
+    readinessBand: string | null;
+    intentSignal: string | null;
+    dimensions: Array<{ label: string; score: number; max: number }>;
+    gapAreas: Array<{ title: string; description: string }>;
+    scorecardPdfUrl: string | null;
+  };
+  conversationSummary: Array<{
+    direction: 'inbound' | 'outbound';
+    timestamp: string;
+    body: string;
+  }>;
+  callDetails: {
+    scheduledAt: string | null;
+    meetingLink: string | null;
+    consultantName: string | null;
+  };
+  talkTrack: string;
+}
+
+/** Column definition from `GET /pipeline/stages` */
+export interface PipelineStageDefinition {
+  id: string;
+  name: string;
+  track: string;
+  order: number;
+  probability: number;
+  color: string;
+  isActive: boolean;
 }
 
 export interface Activity {
   id: string;
   leadId: string;
   leadName: string;
-  type: 'lead_added' | 'stage_changed' | 'wa_sent' | 'email_opened' | 'call_booked' | 'proposal_sent' | 'client_signed' | 'note_added';
+  type:
+    | 'lead_added'
+    | 'stage_changed'
+    | 'wa_sent'
+    | 'email_opened'
+    | 'call_booked'
+    | 'call_cancelled'
+    | 'call_rescheduled'
+    | 'proposal_sent'
+    | 'client_signed'
+    | 'note_added';
   description: string;
   timestamp: string;
   addedBy?: string;
@@ -270,13 +372,73 @@ export interface Integration {
   apiKey: string;
 }
 
+export interface DayHoursConfig {
+  start: string;
+  end: string;
+  enabled: boolean;
+}
+
+export interface WorkingHoursConfig {
+  monday: DayHoursConfig;
+  tuesday: DayHoursConfig;
+  wednesday: DayHoursConfig;
+  thursday: DayHoursConfig;
+  friday: DayHoursConfig;
+  saturday: DayHoursConfig;
+  sunday: DayHoursConfig;
+}
+
+export interface AvailabilitySettings {
+  slotDurationMinutes: number;
+  bufferBetweenSlots: number;
+  workingHours: WorkingHoursConfig;
+  timezone: string;
+  advanceBookingDays: number;
+  slotsToOfferInBot: number;
+  meetingTitle: string;
+  ghlBookingLink: string;
+  primaryConsultantUserId?: string;
+}
+
+export interface CalendarIntegrationStatus {
+  google: { connected: boolean; email: string; lastSyncAt: string | null };
+  outlook: { connected: boolean; email: string };
+}
+
+export interface CalendarTestSlot {
+  index: number;
+  startTime: string;
+  endTime: string;
+  label: string;
+  labelShort: string;
+}
+
+export interface UpcomingCallRow {
+  leadId: string;
+  leadName: string;
+  scheduledAt: string;
+  meetLink: string;
+  profileUrl: string;
+}
+
 export interface Settings {
+  calendlyLink?: string;
+  calendlyWebhookSigningKey?: string;
   thresholds: {
     notReadyBelow: number;
     franchiseReadyMin: number;
     franchiseReadyMax: number;
   };
+  alertRules: {
+    coldLeadDaysWarning: number;
+    coldLeadDaysCritical: number;
+    stuckStageDaysWarning: number;
+    stuckStageDaysCritical: number;
+    proposalNotOpenedDaysInfo: number;
+    proposalNotOpenedDaysWarning: number;
+  };
   integrations: Integration[];
   waTemplates: WATemplate[];
   emailTemplates: EmailTemplate[];
+  availabilitySettings?: AvailabilitySettings;
 }

@@ -8,7 +8,7 @@ import { MoreVertical, MessageCircle } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
-import { getLeadHealth } from '@/lib/salesMockData';
+import { useLeadHealthMap } from '@/hooks/useLeads';
 
 interface LeadCardProps {
   lead: Lead;
@@ -18,7 +18,8 @@ interface LeadCardProps {
 }
 
 export function LeadCard({ lead, onClick, onMenuAction, isDragging }: LeadCardProps) {
-  const health = getLeadHealth(lead.id);
+  const { data: healthMap } = useLeadHealthMap();
+  const health = healthMap?.[lead.id];
 
   return (
     <div

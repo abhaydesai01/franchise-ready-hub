@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,8 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { useCreateLead } from '@/hooks/useLeads';
 import { useTeam } from '@/hooks/useSettings';
+import { usePipelineStages } from '@/hooks/usePipeline';
 import { toast } from 'sonner';
-import type { Source } from '@/types';
+import type { Source, Track } from '@/types';
 
 interface AddLeadModalProps {
   open: boolean;
@@ -20,22 +21,52 @@ export function AddLeadModal({ open, onOpenChange }: AddLeadModalProps) {
   const [phone, setPhone] = useState('+91');
   const [email, setEmail] = useState('');
   const [source, setSource] = useState<Source>('Meta Ad');
+  const [track, setTrack] = useState<Track>('Not Ready');
+  const [pipelineStageId, setPipelineStageId] = useState('');
   const [assignedTo, setAssignedTo] = useState('');
   const [notes, setNotes] = useState('');
 
   const createLead = useCreateLead();
   const { data: teamMembers } = useTeam();
+  const { data: allStages = [] } = usePipelineStages();
+
+  const stagesForTrack = useMemo(
+    () => allStages.filter((s) => s.track === track && s.isActive).sort((a, b) => a.order - b.order),
+    [allStages, track],
+  );
+
+  useEffect(() => {
+    if (!stagesForTrack.length) {
+      setPipelineStageId('');
+      return;
+    }
+    const stillValid = stagesForTrack.some((s) => s.id === pipelineStageId);
+    if (!stillValid) {
+      setPipelineStageId(stagesForTrack[0].id);
+    }
+  }, [stagesForTrack, pipelineStageId]);
 
   const handleSubmit = async () => {
     if (!name || !phone) {
       toast.error('Name and phone are required');
       return;
     }
+    if (!pipelineStageId) {
+      toast.error('Please select track/stage');
+      return;
+    }
     try {
-      await createLead.mutateAsync({ name, phone, email, source, assignedTo, notes });
+      await createLead.mutateAsync({ name, phone, email, source, assignedTo, notes, pipelineStageId });
       toast.success('Lead added successfully');
       onOpenChange(false);
-      setName(''); setPhone('+91'); setEmail(''); setSource('Meta Ad'); setAssignedTo(''); setNotes('');
+      setName('');
+      setPhone('+91');
+      setEmail('');
+      setSource('Meta Ad');
+      setTrack('Not Ready');
+      setPipelineStageId('');
+      setAssignedTo('');
+      setNotes('');
     } catch {
       toast.error('Failed to add lead');
     }
@@ -79,6 +110,34 @@ export function AddLeadModal({ open, onOpenChange }: AddLeadModalProps) {
             </Select>
           </div>
           <div>
+            <Label className="text-[13px] font-medium text-brand-ink">Track *</Label>
+            <Select value={track} onValueChange={(v) => setTrack(v as Track)}>
+              <SelectTrigger className="mt-1 border-brand-border">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Not Ready">Not Ready</SelectItem>
+                <SelectItem value="Franchise Ready">Franchise Ready</SelectItem>
+                <SelectItem value="Recruitment Only">Recruitment Only</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-[13px] font-medium text-brand-ink">Initial Stage *</Label>
+            <Select value={pipelineStageId} onValueChange={setPipelineStageId} disabled={!stagesForTrack.length}>
+              <SelectTrigger className="mt-1 border-brand-border">
+                <SelectValue placeholder={stagesForTrack.length ? 'Select stage' : 'No stages available'} />
+              </SelectTrigger>
+              <SelectContent>
+                {stagesForTrack.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
             <Label className="text-[13px] font-medium text-brand-ink">Assigned To</Label>
             <Select value={assignedTo} onValueChange={setAssignedTo}>
               <SelectTrigger className="mt-1 border-brand-border">
@@ -86,7 +145,7 @@ export function AddLeadModal({ open, onOpenChange }: AddLeadModalProps) {
               </SelectTrigger>
               <SelectContent>
                 {teamMembers?.map(m => (
-                  <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                  <SelectItem key={m.id} value={m.name}>{m.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

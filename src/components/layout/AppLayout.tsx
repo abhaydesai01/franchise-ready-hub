@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, KanbanSquare, Users, Phone, FileText, Zap,
   UserCheck, Settings, LogOut, Search, Plus, Menu, X, Bell,
@@ -11,7 +12,7 @@ import { NotificationDrawer } from '@/components/crm/NotificationDrawer';
 import { AddLeadModal } from '@/components/crm/AddLeadModal';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { salesAlerts } from '@/lib/salesMockData';
+import { fetchAlertCounts } from '@/lib/api';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
@@ -54,7 +55,12 @@ export function AppLayout({ children }: AppLayoutProps) {
   const currentPath = '/' + location.pathname.split('/')[1];
   const pageTitle = pageTitles[currentPath] || 'Franchise Ready';
 
-  const criticalAlertCount = salesAlerts.filter(a => a.priority === 'critical' && !a.dismissed).length;
+  const { data: alertCounts } = useQuery({
+    queryKey: ['alerts', 'counts'],
+    queryFn: fetchAlertCounts,
+    staleTime: 30_000,
+  });
+  const criticalAlertCount = alertCounts?.critical ?? 0;
 
   return (
     <div className="flex min-h-screen bg-brand-surface">

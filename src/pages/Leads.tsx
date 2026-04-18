@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
 import { Search, Filter, Download, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getLeadHealth } from '@/lib/salesMockData';
+import { useLeadHealthMap } from '@/hooks/useLeads';
 
 export default function Leads() {
   const [search, setSearch] = useState('');
@@ -23,6 +23,7 @@ export default function Leads() {
   const limit = 25;
 
   const { data, isLoading } = useLeads({ search, page, limit });
+  const { data: healthMap } = useLeadHealthMap();
   const leads = data?.leads || [];
   const total = data?.total || 0;
   const totalPages = Math.ceil(total / limit);
@@ -88,7 +89,7 @@ export default function Leads() {
           <TableBody>
             {leads.map((lead, i) => {
               const isSelected = selectedIds.includes(lead.id);
-              const health = getLeadHealth(lead.id);
+              const health = healthMap?.[lead.id];
               return (
                 <TableRow key={lead.id}
                   className={`cursor-pointer transition-colors ${isSelected ? 'bg-brand-crimson-lt' : i % 2 === 0 ? 'bg-white' : 'bg-[#FAFAF8]'} hover:bg-brand-surface`}

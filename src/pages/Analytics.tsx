@@ -1,15 +1,48 @@
-import { stageDropoffs, lossReasonStats, sourceConversions, responseTimeConversions, lostLeads } from '@/lib/salesMockData';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { TrendingDown, Target, Clock, Megaphone, AlertTriangle, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useLossAnalytics } from '@/hooks/useDashboard';
+import { SkeletonCard } from '@/components/crm/SkeletonCard';
 
 const PIE_COLORS = ['#C8102E', '#D4882A', '#1A5CB8', '#1B8A4A', '#7C3AED', '#0891B2', '#DC2626', '#4B5563'];
 
 export default function Analytics() {
   const navigate = useNavigate();
+  const { data, isLoading } = useLossAnalytics();
+  const stageDropoffs = data?.stageDropoffs ?? [];
+  const lossReasonStats = data?.lossReasonStats ?? [];
+  const sourceConversions = data?.sourceConversions ?? [];
+  const responseTimeConversions = data?.responseTimeConversions ?? [];
+  const lostLeads = data?.lostLeads ?? [];
   const totalLost = lostLeads.length;
-  const avgDaysInPipeline = Math.round(lostLeads.reduce((sum, l) => sum + l.daysInPipeline, 0) / totalLost);
-  const highestLossStage = stageDropoffs.reduce((max, s) => s.lost > max.lost ? s : max, stageDropoffs[0]);
+  const avgDaysInPipeline =
+    totalLost > 0
+      ? Math.round(
+          lostLeads.reduce((sum, l) => sum + l.daysInPipeline, 0) / totalLost,
+        )
+      : 0;
+  const highestLossStage =
+    stageDropoffs.length > 0
+      ? stageDropoffs.reduce((max, s) => (s.lost > max.lost ? s : max), stageDropoffs[0])
+      : { stage: 'No data', lost: 0 };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="rounded-lg border border-brand-border bg-white p-8 text-center text-[13px] text-brand-muted">
+        Analytics data unavailable right now.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

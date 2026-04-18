@@ -1,4 +1,10 @@
-import { useLead, useLeadActivity, useAddLeadNote } from '@/hooks/useLeads';
+import {
+  useLead,
+  useLeadActivity,
+  useAddLeadNote,
+  useLeadJourney,
+  useLeadConversation,
+} from '@/hooks/useLeads';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { ArrowLeft, Phone, FileText, ChevronDown, MessageCircle } from 'lucide-react';
@@ -13,7 +19,6 @@ import { JourneyTimeline } from '@/components/crm/JourneyTimeline';
 import { WhatsAppChat } from '@/components/crm/WhatsAppChat';
 import { CampaignCard } from '@/components/crm/CampaignCard';
 import { SkeletonCard } from '@/components/crm/SkeletonCard';
-import { getLeadJourney, getLeadConversation, getLeadCampaign } from '@/lib/journeyMockData';
 import { toast } from 'sonner';
 
 export default function LeadProfile() {
@@ -21,12 +26,11 @@ export default function LeadProfile() {
   const navigate = useNavigate();
   const { data: lead, isLoading } = useLead(id || '');
   const { data: activities = [] } = useLeadActivity(id || '');
+  const { data: journeyEvents = [] } = useLeadJourney(id || '');
+  const { data: conversation } = useLeadConversation(id || '');
   const addNote = useAddLeadNote();
   const [noteText, setNoteText] = useState('');
-
-  const journeyEvents = id ? getLeadJourney(id) : [];
-  const conversation = id ? getLeadConversation(id) : undefined;
-  const campaign = id ? getLeadCampaign(id) : undefined;
+  const campaign = lead?.campaign;
 
   if (isLoading) return <div className="max-w-5xl mx-auto space-y-4"><SkeletonCard /><SkeletonCard /><SkeletonCard /></div>;
   if (!lead) return <div className="text-center py-16 text-brand-muted">Lead not found</div>;
@@ -96,10 +100,51 @@ export default function LeadProfile() {
                 <span className="text-[13px] text-brand-muted">Email</span>
                 <a href={`mailto:${lead.email}`} className="text-[13px] text-brand-crimson hover:underline">{lead.email}</a>
               </div>
+              {lead.company && (
+                <div className="flex justify-between">
+                  <span className="text-[13px] text-brand-muted">Company</span>
+                  <span className="text-[13px]">{lead.company}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-[13px] text-brand-muted">Source</span>
                 <span className="text-[12px] px-2 py-0.5 rounded-full bg-brand-surface">{lead.source}</span>
               </div>
+              {(lead.metaLeadId || lead.metaFormId || lead.utmSource || lead.utmMedium || lead.utmCampaign) && (
+                <>
+                  <div className="pt-2 border-t border-brand-border" />
+                  {lead.metaLeadId && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">Meta Lead ID</span>
+                      <span className="text-[12px] font-mono text-right break-all">{lead.metaLeadId}</span>
+                    </div>
+                  )}
+                  {lead.metaFormId && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">Meta Form ID</span>
+                      <span className="text-[12px] font-mono text-right break-all">{lead.metaFormId}</span>
+                    </div>
+                  )}
+                  {lead.utmSource && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">UTM Source</span>
+                      <span className="text-[13px] text-right">{lead.utmSource}</span>
+                    </div>
+                  )}
+                  {lead.utmMedium && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">UTM Medium</span>
+                      <span className="text-[13px] text-right">{lead.utmMedium}</span>
+                    </div>
+                  )}
+                  {lead.utmCampaign && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-[13px] text-brand-muted">UTM Campaign</span>
+                      <span className="text-[13px] text-right">{lead.utmCampaign}</span>
+                    </div>
+                  )}
+                </>
+              )}
               <div className="flex justify-between">
                 <span className="text-[13px] text-brand-muted">Added</span>
                 <span className="text-[13px]">{lead.createdAt}</span>

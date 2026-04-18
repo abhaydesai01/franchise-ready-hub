@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { useProposals, useGenerateProposal } from '@/hooks/useProposals';
+import {
+  useProposals,
+  useGenerateProposal,
+  useSendProposalViaWhatsApp,
+  useSendProposalViaEmail,
+  useProposalPdf,
+} from '@/hooks/useProposals';
 import { useLeads } from '@/hooks/useLeads';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
@@ -19,18 +25,23 @@ export default function Proposals() {
   const { data: proposals = [], isLoading } = useProposals({ status: statusFilter });
   const { data: leadsData } = useLeads();
   const generateProposal = useGenerateProposal();
+  const sendViaWhatsApp = useSendProposalViaWhatsApp();
+  const sendViaEmail = useSendProposalViaEmail();
+  const fetchPdf = useProposalPdf();
   const [modalOpen, setModalOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [program, setProgram] = useState('Franchise Ready');
   const [callNotes, setCallNotes] = useState('');
   const [generatedContent, setGeneratedContent] = useState('');
+  const [generatedProposalId, setGeneratedProposalId] = useState('');
 
   const handleGenerate = async () => {
     setStep(3);
     try {
       const result = await generateProposal.mutateAsync({ leadId: selectedLeadId, program, callNotes });
       setGeneratedContent(result.content);
+      setGeneratedProposalId(result.id);
       toast.success('Proposal generated');
     } catch {
       toast.error('Failed to generate proposal');
@@ -45,6 +56,7 @@ export default function Proposals() {
     setProgram('Franchise Ready');
     setCallNotes('');
     setGeneratedContent('');
+    setGeneratedProposalId('');
   };
 
   if (isLoading) return <SkeletonTable rows={5} />;
@@ -174,9 +186,48 @@ export default function Proposals() {
                     <div className="flex justify-between">
                       <Button variant="outline" onClick={() => setStep(2)} className="border-brand-border">← Regenerate</Button>
                       <div className="flex gap-2">
-                        <Button variant="outline" className="border-brand-border text-[12px]">Send via WhatsApp</Button>
-                        <Button variant="outline" className="border-brand-border text-[12px]">Send via Email</Button>
-                        <Button variant="outline" className="border-brand-border text-[12px]">Download PDF</Button>
+                        <Button
+                          variant="outline"
+                          className="border-brand-border text-[12px]"
+                          disabled={!generatedProposalId || sendViaWhatsApp.isPending}
+                          onClick={async () => {
+                            if (!generatedProposalId) return;
+                            const res = await sendViaWhatsApp.mutateAsync(generatedProposalId);
+                            toast.success(res.message);
+                          }}
+                        >
+                          Send via WhatsApp
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="border-brand-border text-[12px]"
+                          disabled={!generatedProposalId || sendViaEmail.isPending}
+                          onClick={async () => {
+                            if (!generatedProposalId) return;
+                            const res = await sendViaEmail.mutateAsync(generatedProposalId);
+                            toast.success(res.message);
+                          }}
+                        >
+                          Send via Email
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="border-brand-border text-[12px]"
+                          disabled={!generatedProposalId || fetchPdf.isPending}
+                          onClick={async () => {
+                            if (!generatedProposalId) return;
+                            const res = await fetchPdf.mutateAsync(generatedProposalId);
+                            const url = URL.createObjectURL(res.blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = res.filename || 'proposal.pdf';
+                            a.click();
+                            URL.revokeObjectURL(url);
+                            toast.success('Proposal download started');
+                          }}
+                        >
+                          Download PDF
+                        </Button>
                         <Button onClick={resetModal} className="bg-brand-crimson hover:bg-brand-crimson-dk text-white text-[12px]">Done</Button>
                       </div>
                     </div>

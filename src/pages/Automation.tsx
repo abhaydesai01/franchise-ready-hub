@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { useSequences, useAutomationLogs } from '@/hooks/useAutomation';
+import {
+  useSequences,
+  useAutomationLogs,
+  useReEngagementRules,
+  useReEngagementLogs,
+  useUpdateReEngagementRule,
+} from '@/hooks/useAutomation';
 import { TrackPill } from '@/components/crm/TrackPill';
 import { SkeletonTable, SkeletonCard } from '@/components/crm/SkeletonCard';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
@@ -11,8 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { getTrackColors, getStatusColors } from '@/lib/utils';
 import { GripVertical, Trash2, Plus, Zap, MessageSquare, Phone, Mail, UserPlus, CheckCircle2, XCircle, Clock, ArrowRight, TrendingUp, AlertTriangle, Eye } from 'lucide-react';
-import { reEngagementRules, reEngagementLogs } from '@/lib/reEngagementMockData';
-import type { AutomationSequence, AutomationStep } from '@/types';
+import type { AutomationSequence } from '@/types';
 import type { ReEngagementRule, ReEngagementLog } from '@/types/sales';
 
 const ACTION_ICONS: Record<string, React.ReactNode> = {
@@ -38,13 +43,17 @@ const STATUS_DOT: Record<string, string> = {
 export default function Automation() {
   const { data: sequences = [], isLoading: loadingSeq } = useSequences();
   const { data: logs = [], isLoading: loadingLogs } = useAutomationLogs();
+  const { data: rules = [], isLoading: loadingRules } = useReEngagementRules();
+  const { data: reLogs = [], isLoading: loadingReLogs } = useReEngagementLogs();
+  const updateRuleMutation = useUpdateReEngagementRule();
   const [activeTab, setActiveTab] = useState<'sequences' | 'logs' | 'reengagement' | 'reengagement_logs'>('sequences');
   const [editingSeq, setEditingSeq] = useState<AutomationSequence | null>(null);
   const [viewingRule, setViewingRule] = useState<ReEngagementRule | null>(null);
-  const [rules, setRules] = useState<ReEngagementRule[]>(reEngagementRules);
 
   const toggleRule = (id: string) => {
-    setRules(prev => prev.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
+    const rule = rules.find((r) => r.id === id);
+    if (!rule) return;
+    updateRuleMutation.mutate({ id, enabled: !rule.enabled });
   };
 
   const tabs = [
@@ -154,7 +163,7 @@ export default function Automation() {
               </Button>
             </div>
 
-            {rules.map(rule => (
+            {loadingRules ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />) : rules.map(rule => (
               <div key={rule.id} className={`bg-white rounded-[10px] border p-5 shadow-[0_1px_4px_rgba(0,0,0,0.06)] transition-all ${rule.enabled ? 'border-brand-border' : 'border-brand-border opacity-60'}`}>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
@@ -203,7 +212,11 @@ export default function Automation() {
                     <Button variant="ghost" size="sm" className="text-[11px] h-7 text-brand-muted" onClick={() => setViewingRule(rule)}>
                       <Eye className="w-3.5 h-3.5 mr-1" /> View
                     </Button>
-                    <Switch checked={rule.enabled} onCheckedChange={() => toggleRule(rule.id)} />
+                    <Switch
+                      checked={rule.enabled}
+                      disabled={updateRuleMutation.isPending}
+                      onCheckedChange={() => toggleRule(rule.id)}
+                    />
                   </div>
                 </div>
               </div>
@@ -219,6 +232,9 @@ export default function Automation() {
               <p className="text-[12px] text-brand-muted mt-0.5">Every automated re-engagement action taken on leads</p>
             </div>
 
+            {loadingReLogs ? (
+              <SkeletonTable />
+            ) : (
             <div className="bg-white rounded-[10px] border border-brand-border overflow-hidden">
               <Table>
                 <TableHeader>
@@ -231,7 +247,7 @@ export default function Automation() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {reEngagementLogs.map((log, i) => {
+                  {reLogs.map((log, i) => {
                     const outcome = OUTCOME_CONFIG[log.outcome];
                     return (
                       <TableRow key={log.id} className={i % 2 === 0 ? 'bg-white' : 'bg-[#FAFAF8]'}>
@@ -268,6 +284,7 @@ export default function Automation() {
                 </TableBody>
               </Table>
             </div>
+            )}
           </div>
         )}
       </div>
@@ -431,7 +448,7 @@ export default function Automation() {
                 <div>
                   <h4 className="text-[11px] font-semibold uppercase text-brand-muted mb-2">Recent Triggers</h4>
                   <div className="space-y-2">
-                    {reEngagementLogs.filter(l => l.ruleId === viewingRule.id).slice(0, 5).map(log => {
+                    {reLogs.filter(l => l.ruleId === viewingRule.id).slice(0, 5).map(log => {
                       const outcome = OUTCOME_CONFIG[log.outcome];
                       return (
                         <div key={log.id} className="flex items-center justify-between p-2.5 bg-brand-surface rounded-lg border border-brand-border">

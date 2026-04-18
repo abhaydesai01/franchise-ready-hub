@@ -1,0 +1,27 @@
+{
+  "name": "franchise-ready-crm-api",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "worker:sequence": "tsx lib/queues/workers/sequence.worker.ts",
+    "test:system": "npm run build && tsx scripts/system-smoke.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "bullmq": "^5.34.5",
+    "ioredis": "^5.4.2",
+    "mongoose": "^8.9.3",
+    "next": "14.2.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

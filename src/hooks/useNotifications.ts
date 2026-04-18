@@ -9,6 +9,8 @@ export function useMarkAllRead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: markAllNotificationsRead,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['notifications'] }); },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['notifications'] });
+    },
   });
 }

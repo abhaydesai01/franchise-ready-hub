@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { salesAlerts } from '@/lib/salesMockData';
 import type { AlertPriority } from '@/types/sales';
-import { Bell, AlertTriangle, Info, X, MessageCircle, Phone, StickyNote, Eye, FileText, Filter } from 'lucide-react';
+import { Bell, AlertTriangle, Info, X, MessageCircle, Phone, StickyNote, Eye, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { useAlertCounts, useAlerts, useDismissAlert, useRunAlertAction } from '@/hooks/useAlerts';
+import { SkeletonCard } from '@/components/crm/SkeletonCard';
 
 const priorityConfig: Record<AlertPriority, { icon: typeof Bell; label: string; color: string; bg: string; border: string }> = {
   critical: { icon: Bell, label: 'Critical', color: 'text-red-700', bg: 'bg-red-50', border: 'border-l-red-600' },
@@ -23,33 +24,51 @@ const actionIcons: Record<string, typeof MessageCircle> = {
 export default function Alerts() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<'all' | AlertPriority>('all');
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const { data: alerts = [], isLoading } = useAlerts({ priority: filter });
+  const { data: counts } = useAlertCounts();
+  const dismiss = useDismissAlert();
+  const runAction = useRunAlertAction();
 
-  const alerts = salesAlerts.filter(a => {
-    if (dismissed.has(a.id)) return false;
-    if (filter === 'all') return !a.dismissed;
-    return a.priority === filter && !a.dismissed;
-  });
-
-  const counts = {
-    all: salesAlerts.filter(a => !a.dismissed && !dismissed.has(a.id)).length,
-    critical: salesAlerts.filter(a => a.priority === 'critical' && !a.dismissed && !dismissed.has(a.id)).length,
-    warning: salesAlerts.filter(a => a.priority === 'warning' && !a.dismissed && !dismissed.has(a.id)).length,
-    info: salesAlerts.filter(a => a.priority === 'info' && !a.dismissed && !dismissed.has(a.id)).length,
-  };
-
-  const dismissAlert = (id: string) => {
-    setDismissed(prev => new Set(prev).add(id));
-    toast.success('Alert dismissed');
-  };
-
-  const handleAction = (alert: typeof salesAlerts[0]) => {
-    if (alert.actionType === 'view_lead') {
-      navigate(`/leads/${alert.leadId}`);
-    } else {
-      toast.success(`${alert.actionLabel} — action triggered for ${alert.leadName}`);
+  const dismissAlert = async (id: string) => {
+    try {
+      await dismiss.mutateAsync(id);
+      toast.success('Alert dismissed');
+    } catch {
+      toast.error('Failed to dismiss alert');
     }
   };
+
+  const handleAction = async (alert: (typeof alerts)[number]) => {
+    if (alert.actionType === 'view_lead') {
+      navigate(`/leads/${alert.leadId}`);
+      return;
+    }
+    try {
+      const res = await runAction.mutateAsync({ id: alert.id });
+      toast.success(res.message || `${alert.actionLabel} completed for ${alert.leadName}`);
+      if (alert.actionType === 'book_call') navigate('/calls');
+      if (alert.actionType === 'send_proposal') navigate('/proposals');
+      if (alert.actionType === 'add_note' || alert.actionType === 'send_wa') {
+        navigate(`/leads/${alert.leadId}`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : `Failed to ${alert.actionLabel?.toLowerCase() ?? 'run action'}`;
+      toast.error(msg);
+    }
+  };
+
+  if (isLoading || !counts) {
+    return (
+      <div className="space-y-4 max-w-4xl">
+        <div className="h-10 w-64 rounded bg-brand-surface animate-pulse" />
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 max-w-4xl">
@@ -134,6 +153,7 @@ export default function Alerts() {
                       <Button
                         size="sm"
                         onClick={() => handleAction(alert)}
+                        disabled={runAction.isPending}
                         className="text-[11px] h-7 bg-brand-crimson hover:bg-brand-crimson-dk text-white gap-1"
                       >
                         <ActionIcon className="w-3 h-3" />

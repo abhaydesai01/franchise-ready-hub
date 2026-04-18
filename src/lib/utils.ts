@@ -74,6 +74,8 @@ export function getActivityIcon(type: string): { icon: string; bgColor: string }
     case 'wa_sent': return { icon: 'MessageCircle', bgColor: '#EDFAF3' };
     case 'email_opened': return { icon: 'Mail', bgColor: '#E8F0FD' };
     case 'call_booked': return { icon: 'Phone', bgColor: '#FEF9C3' };
+    case 'call_cancelled': return { icon: 'Phone', bgColor: '#FEE2E2' };
+    case 'call_rescheduled': return { icon: 'Phone', bgColor: '#E0F2FE' };
     case 'proposal_sent': return { icon: 'FileText', bgColor: '#FDEAED' };
     case 'client_signed': return { icon: 'Trophy', bgColor: '#C8102E' };
     case 'note_added': return { icon: 'StickyNote', bgColor: '#F1F5F9' };

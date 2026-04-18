@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useLeads, useUpdateLeadStage } from '@/hooks/useLeads';
+import { usePipelineStages } from '@/hooks/usePipeline';
 import { LeadCard } from '@/components/crm/LeadCard';
 import { LeadDrawer } from '@/components/crm/LeadDrawer';
 import { SkeletonCard } from '@/components/crm/SkeletonCard';
@@ -28,15 +29,13 @@ interface TrackConfig {
   stages: Stage[];
 }
 
-const trackConfigs: TrackConfig[] = [
+const TRACK_TAB_ORDER: Track[] = ['Not Ready', 'Franchise Ready', 'Recruitment Only'];
+
+const SKELETON_TRACK_CONFIG: TrackConfig[] = [
   { track: 'Not Ready', stages: ['Gap Nurture', 'Not Early', 'Discovery Call', 'Convert to Consulting'] },
   { track: 'Franchise Ready', stages: ['Discovery Booked', 'Reminders Sent', 'Proposal Sent', 'Signed'] },
   { track: 'Recruitment Only', stages: ['Routed to Eden'] },
 ];
-
-// Build a lookup: stage → track
-const stageToTrack: Record<string, Track> = {};
-trackConfigs.forEach(tc => tc.stages.forEach(s => { stageToTrack[s] = tc.track; }));
 
 function DroppableColumn({ id, children }: { id: string; children: React.ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id });
@@ -71,6 +70,7 @@ function SortableLeadCard({ lead, onClick }: { lead: Lead; onClick: () => void }
 
 export default function Pipeline() {
   const { data, isLoading } = useLeads();
+  const { data: stageRows = [], isLoading: stagesLoading } = usePipelineStages();
   const updateStage = useUpdateLeadStage();
   const [activeTrack, setActiveTrack] = useState<string>('All');
   const [search, setSearch] = useState('');
@@ -79,6 +79,46 @@ export default function Pipeline() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeDragLead, setActiveDragLead] = useState<Lead | null>(null);
+
+  const trackConfigs = useMemo((): TrackConfig[] => {
+    const byTrack = new Map<string, { name: string; order: number }[]>();
+    for (const s of stageRows) {
+      if (!s.isActive) continue;
+      if (!byTrack.has(s.track)) byTrack.set(s.track, []);
+      byTrack.get(s.track)!.push({ name: s.name, order: s.order });
+    }
+    for (const arr of byTrack.values()) {
+      arr.sort((a, b) => a.order - b.order);
+    }
+    const ordered: TrackConfig[] = [];
+    for (const t of TRACK_TAB_ORDER) {
+      const rows = byTrack.get(t);
+      if (rows?.length) {
+        ordered.push({ track: t, stages: rows.map((r) => r.name) as Stage[] });
+      }
+    }
+    for (const t of byTrack.keys()) {
+      if (TRACK_TAB_ORDER.includes(t as Track)) continue;
+      const rows = byTrack.get(t)!;
+      ordered.push({ track: t as Track, stages: rows.map((r) => r.name) as Stage[] });
+    }
+    return ordered;
+  }, [stageRows]);
+
+  const stageToTrack = useMemo(() => {
+    const m: Record<string, Track> = {};
+    trackConfigs.forEach((tc) => tc.stages.forEach((s) => { m[s] = tc.track; }));
+    return m;
+  }, [trackConfigs]);
+
+  const stageKeyToPipelineId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of stageRows) {
+      if (!s.isActive) continue;
+      m.set(`${s.track}::${s.name}`, s.id);
+    }
+    return m;
+  }, [stageRows]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -91,7 +131,9 @@ export default function Pipeline() {
     if (activeTrack !== 'All') filtered = filtered.filter(l => l.track === activeTrack);
     if (search) {
       const s = search.toLowerCase();
-      filtered = filtered.filter(l => l.name.toLowerCase().includes(s) || l.phone.includes(s));
+      filtered = filtered.filter(l =>
+        l.name.toLowerCase().includes(s) || (l.phone && l.phone.toLowerCase().includes(s)),
+      );
     }
     if (sort === 'score') filtered.sort((a, b) => b.score - a.score);
     return filtered;
@@ -127,6 +169,9 @@ export default function Pipeline() {
     const draggedLead = active.data.current?.lead as Lead | undefined;
     if (!draggedLead) return;
 
+    const resolvePipelineStageId = (track: string, stage: string) =>
+      stageKeyToPipelineId.get(`${track}::${stage}`);
+
     // The droppable id is "track::stage"
     const overId = over.id as string;
     const [targetTrack, targetStage] = overId.includes('::')
@@ -139,10 +184,13 @@ export default function Pipeline() {
       const targetLeadObj = leads.find(l => l.id === overId);
       if (targetLeadObj) {
         if (targetLeadObj.stage === draggedLead.stage && targetLeadObj.track === draggedLead.track) return;
+        const pipelineStageId =
+          targetLeadObj.pipelineStageId ?? resolvePipelineStageId(targetLeadObj.track, targetLeadObj.stage);
         updateStage.mutate({
           id: draggedLead.id,
           stage: targetLeadObj.stage,
           track: targetLeadObj.track,
+          ...(pipelineStageId ? { pipelineStageId } : {}),
         });
         return;
       }
@@ -150,28 +198,43 @@ export default function Pipeline() {
 
     if (targetStage === draggedLead.stage && targetTrack === draggedLead.track) return;
 
+    const pipelineStageId =
+      resolvePipelineStageId(targetTrack, targetStage) ??
+      undefined;
+
     updateStage.mutate({
       id: draggedLead.id,
       stage: targetStage,
       track: targetTrack,
+      ...(pipelineStageId ? { pipelineStageId } : {}),
     });
   };
 
-  if (isLoading) {
+  const loading = isLoading || stagesLoading;
+
+  if (loading) {
     return (
       <div className="space-y-6">
-        {trackConfigs.map(tc => (
+        {SKELETON_TRACK_CONFIG.map(tc => (
           <div key={tc.track}>
             <div className="h-12 rounded bg-brand-surface animate-shimmer mb-3" style={{ backgroundImage: 'linear-gradient(90deg, #F0EFEB 25%, #E8E6E0 50%, #F0EFEB 75%)', backgroundSize: '200% 100%' }} />
             <div className="grid grid-cols-4 gap-3">
               {tc.stages.map(s => (
                 <div key={s} className="space-y-2">
-                  {[1, 2].map(i => <SkeletonCard key={i} />)}
+                  {[1, 2].map(i => <SkeletonCard key={`${s}-${i}`} />)}
                 </div>
               ))}
             </div>
           </div>
         ))}
+      </div>
+    );
+  }
+
+  if (!trackConfigs.length) {
+    return (
+      <div className="rounded-lg border border-brand-border bg-white p-8 text-center text-[13px] text-brand-muted">
+        No pipeline stages returned from the server. Check that the backend is running and you are signed in.
       </div>
     );
   }

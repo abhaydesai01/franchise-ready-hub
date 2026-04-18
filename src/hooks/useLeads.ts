@@ -1,5 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchLeads, fetchLead, createLead, updateLeadStage, updateLead, fetchLeadActivity, addLeadNote } from '@/lib/api';
+import {
+  fetchLeads,
+  fetchLead,
+  createLead,
+  updateLeadStage,
+  updateLead,
+  fetchLeadActivity,
+  addLeadNote,
+  fetchLeadJourney,
+  fetchLeadConversation,
+  fetchLeadHealthMap,
+  fetchLeadBriefing,
+} from '@/lib/api';
 import type { Lead } from '@/types';
 
 export function useLeads(params?: { track?: string; stage?: string; search?: string; assignedTo?: string; page?: number; limit?: number }) {
@@ -14,6 +26,37 @@ export function useLeadActivity(leadId: string) {
   return useQuery({ queryKey: ['leadActivity', leadId], queryFn: () => fetchLeadActivity(leadId), enabled: !!leadId });
 }
 
+export function useLeadJourney(leadId: string) {
+  return useQuery({
+    queryKey: ['leadJourney', leadId],
+    queryFn: () => fetchLeadJourney(leadId),
+    enabled: !!leadId,
+  });
+}
+
+export function useLeadConversation(leadId: string) {
+  return useQuery({
+    queryKey: ['leadConversation', leadId],
+    queryFn: () => fetchLeadConversation(leadId),
+    enabled: !!leadId,
+  });
+}
+
+export function useLeadBriefing(leadId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['leadBriefing', leadId],
+    queryFn: () => fetchLeadBriefing(leadId),
+    enabled: !!leadId && enabled,
+  });
+}
+
+export function useLeadHealthMap() {
+  return useQuery({
+    queryKey: ['leadHealthMap'],
+    queryFn: fetchLeadHealthMap,
+  });
+}
+
 export function useCreateLead() {
   const qc = useQueryClient();
   return useMutation({
@@ -25,8 +68,16 @@ export function useCreateLead() {
 export function useUpdateLeadStage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, stage, track }: { id: string; stage: string; track?: string }) => updateLeadStage(id, stage, track),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['leads'] }); qc.invalidateQueries({ queryKey: ['dashboard'] }); },
+    mutationFn: (vars: {
+      id: string;
+      stage: string;
+      track?: string;
+      pipelineStageId?: string;
+    }) => updateLeadStage(vars.id, vars),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
   });
 }
 
