@@ -52,7 +52,16 @@ export type BookSlotInput = {
   leadName: string;
   leadEmail: string;
   leadPhone?: string;
-  bookedVia: 'crm_bot' | 'crm_voice' | 'ghl_link';
+  bookedVia: 'crm_bot' | 'crm_voice' | 'ghl_link' | 'crm_voice_ad_hoc';
+  /**
+   * Ad-hoc times from a voice call: skip the precomputed available-slot match;
+   * block only on Google free/busy for the consultant. Body copy from voice summary + scorecard.
+   */
+  adHocFromVoice?: {
+    eventDescription: string;
+    leadBodyHtml: string;
+    consultantBodyHtml: string;
+  };
 };
 
 @Injectable()
@@ -580,6 +589,34 @@ export class CalendarService {
     });
   }
 
+  private async assertTimeRangeIsFreeOnGoogle(
+    oauth2: OAuth2Client,
+    calendarId: string,
+    start: Date,
+    end: Date,
+  ): Promise<void> {
+    if (end.getTime() <= start.getTime()) {
+      throw new BadRequestException('Invalid time range for booking');
+    }
+    const pad = 60_000;
+    const busy = await googleFreeBusy(oauth2, {
+      timeMin: new Date(start.getTime() - pad).toISOString(),
+      timeMax: new Date(end.getTime() + pad).toISOString(),
+      calendarId,
+    });
+    const ranges = busy
+      .filter((b) => b.start && b.end)
+      .map((b) => ({
+        start: new Date(b.start!),
+        end: new Date(b.end!),
+      }));
+    for (const b of ranges) {
+      if (overlaps(start, end, b.start, b.end)) {
+        throw new SlotUnavailableException();
+      }
+    }
+  }
+
   async bookSlot(input: BookSlotInput): Promise<{
     meetLink: string;
     labelFull: string;
@@ -589,33 +626,49 @@ export class CalendarService {
     if (!input.leadEmail?.trim()) {
       throw new BadRequestException('Lead email is required to book');
     }
-    const available = await this.getAvailableSlots('bot', 30);
-    const startMs = input.slotStartTime.getTime();
-    const endMs = input.slotEndTime.getTime();
-    const match = available.find(
-      (s) =>
-        Math.abs(new Date(s.startTime).getTime() - startMs) < 60_000 &&
-        Math.abs(new Date(s.endTime).getTime() - endMs) < 60_000,
-    );
-    if (!match) throw new SlotUnavailableException();
-
     const lead = await this.leadModel
       .findById(input.leadId)
       .exec();
     if (!lead) throw new NotFoundException('Lead not found');
 
     const integration = await this.getPrimaryIntegration();
-    const consultantUserId = String(integration.userId);
-    const oauth2 = await this.getGoogleOAuth2ForUser(consultantUserId);
+    const uid = String(integration.userId);
+    const oauth2 = await this.getGoogleOAuth2ForUser(uid);
+    const gCalId = integration.googleCalendarId || 'primary';
+
+    if (input.adHocFromVoice) {
+      await this.assertTimeRangeIsFreeOnGoogle(
+        oauth2,
+        gCalId,
+        input.slotStartTime,
+        input.slotEndTime,
+      );
+    } else {
+      const available = await this.getAvailableSlots('bot', 30);
+      const startMs = input.slotStartTime.getTime();
+      const endMs = input.slotEndTime.getTime();
+      const match = available.find(
+        (s) =>
+          Math.abs(new Date(s.startTime).getTime() - startMs) < 60_000 &&
+          Math.abs(new Date(s.endTime).getTime() - endMs) < 60_000,
+      );
+      if (!match) throw new SlotUnavailableException();
+    }
+
+    const consultantUserId = uid;
     const settings = await this.settings.getSettings();
     const av = settings?.availabilitySettings;
     const meetTitle =
       av?.meetingTitle ?? 'Franchise Discovery Call';
     const scorecardPdfUrl = lead.scorecardPdfUrl ?? '';
 
+    const eventDescription = input.adHocFromVoice
+      ? `${input.adHocFromVoice.eventDescription}\n\n---\nLead: ${input.leadName}\nEmail: ${input.leadEmail}\nPhone: ${input.leadPhone ?? '—'}`
+      : `Discovery call booked via Franchise CRM.\n\nLead: ${input.leadName}\nEmail: ${input.leadEmail}\nPhone: ${input.leadPhone ?? '—'}\n\nScorecard: ${scorecardPdfUrl}`;
+
     const eventBody = {
       summary: `${meetTitle} — ${input.leadName}`,
-      description: `Discovery call booked via Franchise CRM.\n\nLead: ${input.leadName}\nEmail: ${input.leadEmail}\nPhone: ${input.leadPhone ?? '—'}\n\nScorecard: ${scorecardPdfUrl}`,
+      description: eventDescription,
       start: {
         dateTime: input.slotStartTime.toISOString(),
         timeZone: 'Asia/Kolkata',
@@ -647,12 +700,15 @@ export class CalendarService {
     let outlookEventId = '';
     const outAccess = await this.getOutlookAccessToken(consultantUserId);
     if (outAccess) {
+      const outlookBody = input.adHocFromVoice
+        ? `${input.adHocFromVoice.consultantBodyHtml}<p><a href="${meetLink}">Join Google Meet</a></p><p>Phone: ${escapeHtml(input.leadPhone ?? '—')}</p>`
+        : `<p>Discovery call with <strong>${escapeHtml(input.leadName)}</strong></p><p>Email: ${escapeHtml(input.leadEmail)}<br/>Phone: ${escapeHtml(input.leadPhone ?? '—')}</p><p><a href="${meetLink}">Join Google Meet</a></p><p>Scorecard: <a href="${escapeHtml(scorecardPdfUrl)}">View Report</a></p>`;
       try {
         const od = await outlookCreateEvent(outAccess, {
           subject: `${meetTitle} — ${input.leadName}`,
           body: {
             contentType: 'HTML',
-            content: `<p>Discovery call with <strong>${escapeHtml(input.leadName)}</strong></p><p>Email: ${escapeHtml(input.leadEmail)}<br/>Phone: ${escapeHtml(input.leadPhone ?? '—')}</p><p><a href="${meetLink}">Join Google Meet</a></p><p>Scorecard: <a href="${escapeHtml(scorecardPdfUrl)}">View Report</a></p>`,
+            content: outlookBody,
           },
           start: {
             dateTime: input.slotStartTime
@@ -732,6 +788,12 @@ export class CalendarService {
       icsBuf,
       leadEmail: input.leadEmail,
       consultantEmail: integration.googleEmail,
+      adHocFromVoice: input.adHocFromVoice
+        ? {
+            leadBodyHtml: input.adHocFromVoice.leadBodyHtml,
+            consultantBodyHtml: input.adHocFromVoice.consultantBodyHtml,
+          }
+        : undefined,
     });
 
     await this.activities.createForLead(input.leadId, {
@@ -849,8 +911,12 @@ export class CalendarService {
     icsBuf: Buffer;
     leadEmail: string;
     consultantEmail: string;
+    adHocFromVoice?: {
+      leadBodyHtml: string;
+      consultantBodyHtml: string;
+    };
   }): Promise<void> {
-    const { lead, meetLink, labelFull, icsBuf, leadEmail, consultantEmail } =
+    const { lead, meetLink, labelFull, icsBuf, leadEmail, consultantEmail, adHocFromVoice } =
       params;
     const apiKey = this.config.get<string>('resendApiKey') ?? '';
     const from = this.config.get<string>('resendFromEmail') ?? '';
@@ -864,11 +930,14 @@ export class CalendarService {
 
     if (apiKey && leadEmail) {
       const resend = new Resend(apiKey);
+      const leadHtml = adHocFromVoice
+        ? `${adHocFromVoice.leadBodyHtml}<p style="margin-top:20px"><strong>Google Meet:</strong> <a href="${meetLink}">Join here</a></p><p>Time: ${escapeHtml(labelFull)}</p>`
+        : `<p>Hi ${escapeHtml(lead.name)},</p><p>Your call is confirmed.</p><p><a href="${meetLink}">Join Google Meet</a></p>`;
       await resend.emails.send({
         from,
         to: leadEmail,
         subject: `Your Franchise Discovery Call is confirmed — ${labelFull}`,
-        html: `<p>Hi ${escapeHtml(lead.name)},</p><p>Your call is confirmed.</p><p><a href="${meetLink}">Join Google Meet</a></p>`,
+        html: leadHtml,
         attachments: icsBuf.length
           ? [{ filename: 'discovery-call.ics', content: icsBuf }]
           : [],
@@ -877,11 +946,14 @@ export class CalendarService {
 
     if (apiKey && consultantEmail) {
       const resend = new Resend(apiKey);
+      const consultantHtml = adHocFromVoice
+        ? `${adHocFromVoice.consultantBodyHtml}<p style="margin-top:20px"><strong>Meet:</strong> <a href="${meetLink}">Join</a> · <a href="${fe}/leads/${lead._id}">Open lead in CRM</a></p><p>Phone: ${escapeHtml(lead.phone ?? '—')}</p><p>When: ${escapeHtml(labelFull)}</p>`
+        : `<p>Lead: ${escapeHtml(lead.name)}</p><p>Email: ${escapeHtml(leadEmail)}</p><p>Phone: ${escapeHtml(lead.phone ?? '—')}</p><p><a href="${meetLink}">Meet</a> · <a href="${fe}/leads/${lead._id}">CRM</a></p>`;
       await resend.emails.send({
         from,
         to: consultantEmail,
         subject: `New discovery call booked — ${lead.name} on ${labelFull}`,
-        html: `<p>Lead: ${escapeHtml(lead.name)}</p><p>Email: ${escapeHtml(leadEmail)}</p><p>Phone: ${escapeHtml(lead.phone ?? '—')}</p><p><a href="${meetLink}">Meet</a> · <a href="${fe}/leads/${lead._id}">CRM</a></p>`,
+        html: consultantHtml,
       });
     }
 

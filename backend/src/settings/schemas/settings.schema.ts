@@ -223,6 +223,21 @@ export class AppSettings {
   @Prop({ type: [EmailTemplateSettingSchema], default: [] })
   emailTemplates!: EmailTemplateSetting[];
 
+  /** Delay before WhatsApp no-response triggers voice fallback (synced to `crm_settings`). */
+  @Prop({ default: 30 })
+  voiceFallbackDelayMinutes!: number;
+
+  /** Max outbound voice attempts before nurture. */
+  @Prop({ default: 2 })
+  maxVoiceAttempts!: number;
+
+  /** Vaani agent UUID when not using env only. */
+  @Prop({ default: '' })
+  vaaniAgentId!: string;
+
+  @Prop({ default: '' })
+  vaaniOutboundNumber!: string;
+
   @Prop({ type: AvailabilitySettingsSchema, default: () => ({}) })
   availabilitySettings!: AvailabilitySettings;
 }

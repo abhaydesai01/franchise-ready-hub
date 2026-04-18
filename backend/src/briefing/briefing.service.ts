@@ -140,7 +140,8 @@ export class BriefingService {
     lead: Lead & { _id: string },
     user: CurrentUserPayload,
   ): void {
-    if (user.role === 'admin' || user.role === 'manager') return;
+    const role = (user.role ?? '').toString().toLowerCase();
+    if (role === 'admin' || role === 'manager') return;
     const oid = String(user._id);
     const ownerMatches =
       lead.ownerId &&

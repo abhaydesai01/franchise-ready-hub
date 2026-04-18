@@ -53,6 +53,13 @@ const DEFAULT_SETTINGS = {
     { id: 'i3', name: 'Resend (Email)', icon: 'Mail', connected: false, apiKey: '' },
     { id: 'i4', name: 'Claude API (Anthropic)', icon: 'Zap', connected: false, apiKey: '' },
     { id: 'i5', name: 'Meta Ads (Webhook)', icon: 'Globe', connected: false, apiKey: '' },
+    {
+      id: 'i6',
+      name: 'Vaani Voice Agent',
+      icon: 'Phone',
+      connected: false,
+      apiKey: '',
+    },
   ],
   waTemplates: [
     { id: 'wt1', name: 'Gap Nurture Intro', body: 'Hi {lead_name}! This is {consultant_name} from Franchise Ready.', channel: 'WhatsApp' },
@@ -64,6 +71,10 @@ const DEFAULT_SETTINGS = {
   ],
   calendlyLink: '',
   calendlyWebhookSigningKey: '',
+  voiceFallbackDelayMinutes: 30,
+  maxVoiceAttempts: 2,
+  vaaniAgentId: '',
+  vaaniOutboundNumber: '',
   availabilitySettings: DEFAULT_AVAILABILITY,
 };
 
@@ -93,6 +104,29 @@ export class SettingsService {
       $set.calendlyLink = DEFAULT_SETTINGS.calendlyLink;
     if ((exists as any).calendlyWebhookSigningKey === undefined)
       $set.calendlyWebhookSigningKey = DEFAULT_SETTINGS.calendlyWebhookSigningKey;
+    if ((exists as any).voiceFallbackDelayMinutes === undefined) {
+      $set.voiceFallbackDelayMinutes = DEFAULT_SETTINGS.voiceFallbackDelayMinutes;
+    }
+    if ((exists as any).maxVoiceAttempts === undefined) {
+      $set.maxVoiceAttempts = DEFAULT_SETTINGS.maxVoiceAttempts;
+    }
+    if ((exists as any).vaaniAgentId === undefined) $set.vaaniAgentId = '';
+    if ((exists as any).vaaniOutboundNumber === undefined) {
+      $set.vaaniOutboundNumber = '';
+    }
+    const integ = (exists as { integrations?: { id: string }[] }).integrations;
+    if (integ && !integ.some((i) => i.id === 'i6')) {
+      $set.integrations = [
+        ...integ,
+        {
+          id: 'i6',
+          name: 'Vaani Voice Agent',
+          icon: 'Phone',
+          connected: false,
+          apiKey: '',
+        },
+      ];
+    }
     if (!(exists as any).availabilitySettings) {
       $set.availabilitySettings = DEFAULT_AVAILABILITY;
     }
@@ -120,18 +154,34 @@ export class SettingsService {
     if (dto.integrations) $set.integrations = dto.integrations;
     if (dto.waTemplates) $set.waTemplates = dto.waTemplates;
     if (dto.emailTemplates) $set.emailTemplates = dto.emailTemplates;
+    if (dto.voiceFallbackDelayMinutes !== undefined) {
+      $set.voiceFallbackDelayMinutes = dto.voiceFallbackDelayMinutes;
+    }
+    if (dto.maxVoiceAttempts !== undefined) $set.maxVoiceAttempts = dto.maxVoiceAttempts;
+    if (dto.vaaniAgentId !== undefined) $set.vaaniAgentId = dto.vaaniAgentId;
+    if (dto.vaaniOutboundNumber !== undefined) {
+      $set.vaaniOutboundNumber = dto.vaaniOutboundNumber;
+    }
 
     const updated = await this.settingsModel
       .findOneAndUpdate({}, { $set }, { returnDocument: 'after' })
       .lean<(AppSettings & { _id: string }) | null>()
       .exec();
 
-    if (dto.calendlyLink !== undefined && this.connection.db) {
-      await this.connection.db.collection('crm_settings').updateOne(
-        {},
-        { $set: { calendlyLink: dto.calendlyLink, updatedAt: new Date() } },
-        { upsert: true },
-      );
+    if (this.connection.db) {
+      const crmPatch: Record<string, unknown> = { updatedAt: new Date() };
+      if (dto.calendlyLink !== undefined) crmPatch.calendlyLink = dto.calendlyLink;
+      if (dto.voiceFallbackDelayMinutes !== undefined) {
+        crmPatch.voiceFallbackDelayMinutes = dto.voiceFallbackDelayMinutes;
+      }
+      if (dto.maxVoiceAttempts !== undefined) {
+        crmPatch.maxVoiceAttempts = dto.maxVoiceAttempts;
+      }
+      if (Object.keys(crmPatch).length > 1) {
+        await this.connection.db
+          .collection('crm_settings')
+          .updateOne({}, { $set: crmPatch }, { upsert: true });
+      }
     }
 
     return updated;

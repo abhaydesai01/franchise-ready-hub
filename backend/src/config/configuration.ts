@@ -28,7 +28,19 @@ export default () => ({
   /** VAPI outbound caller ID (dashboard → Phone numbers). */
   vapiPhoneNumberId: process.env.VAPI_PHONE_NUMBER_ID ?? '',
   vapiWebhookSecret: process.env.VAPI_WEBHOOK_SECRET ?? '',
+  /** Vaani Voice (https://vaanivoice.ai) — outbound agent; env overrides Settings UI. */
+  vaaniApiKey: process.env.VAANI_API_KEY ?? '',
+  vaaniAgentId: process.env.VAANI_AGENT_ID ?? '',
+  vaaniBaseUrl: (process.env.VAANI_BASE_URL ?? 'https://api.vaanivoice.ai').replace(
+    /\/$/,
+    '',
+  ),
+  vaaniOutboundNumber: process.env.VAANI_OUTBOUND_NUMBER ?? '',
+  vaaniWebhookSecret: process.env.VAANI_WEBHOOK_SECRET ?? '',
   companyName: process.env.COMPANY_NAME ?? 'Franchise Ready',
+  /** Google AI Studio / Gemini — voice-call → scorecard + track (optional). */
+  geminiApiKey: process.env.GEMINI_API_KEY ?? '',
+  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.0-flash',
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
   /** Override via ANTHROPIC_MODEL — see Anthropic console for exact IDs */
   anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',

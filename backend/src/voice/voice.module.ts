@@ -8,6 +8,7 @@ import { VoiceAgentService } from './voice-agent.service';
 import { VoiceWebhookService } from './voice-webhook.service';
 import { VoiceWebhookController } from './voice-webhook.controller';
 import { NurtureQueueService } from './nurture-queue.service';
+import { VaaniModule } from './vaani.module';
 
 @Module({
   imports: [
@@ -15,9 +16,10 @@ import { NurtureQueueService } from './nurture-queue.service';
     SettingsModule,
     WhatsappModule,
     ActivitiesModule,
+    VaaniModule,
   ],
   controllers: [VoiceWebhookController],
   providers: [VoiceAgentService, VoiceWebhookService, NurtureQueueService],
-  exports: [VoiceAgentService, NurtureQueueService],
+  exports: [VoiceAgentService, NurtureQueueService, VaaniModule],
 })
 export class VoiceModule {}

@@ -15,6 +15,11 @@ import { BriefingModule } from '../briefing/briefing.module';
 import { ActivitiesModule } from '../activities/activities.module';
 import { PostCallPipelineService } from './post-call-pipeline.service';
 import { ProposalsModule } from '../proposals/proposals.module';
+import { VaaniModule } from '../voice/vaani.module';
+import { CalendarModule } from '../calendar/calendar.module';
+import { GeminiScoringModule } from '../voice/gemini-scoring.module';
+import { VoicePipelineSyncModule } from '../voice/voice-pipeline-sync.module';
+import { VoiceAdHocCalendarModule } from '../voice/voice-ad-hoc-calendar.module';
 
 @Module({
   imports: [
@@ -29,6 +34,11 @@ import { ProposalsModule } from '../proposals/proposals.module';
     BriefingModule,
     ActivitiesModule,
     ProposalsModule,
+    VaaniModule,
+    CalendarModule,
+    GeminiScoringModule,
+    VoicePipelineSyncModule,
+    VoiceAdHocCalendarModule,
   ],
   controllers: [LeadsController],
   providers: [LeadsService, PostCallPipelineService],

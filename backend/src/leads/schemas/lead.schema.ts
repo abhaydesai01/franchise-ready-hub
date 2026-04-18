@@ -2,6 +2,10 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 import { PipelineStage } from '../../pipeline/schemas/pipeline-stage.schema';
 import { User } from '../../users/schemas/user.schema';
+import {
+  VoiceCallEntry,
+  VoiceCallEntrySchema,
+} from './voice-call-entry.schema';
 
 export type LeadDocument = Lead & Document;
 
@@ -68,6 +72,10 @@ export class Lead {
   @Prop()
   scorecardSentAt?: Date;
 
+  /** Vaani (or legacy VAPI) outbound voice attempts — full timeline per call. */
+  @Prop({ type: [VoiceCallEntrySchema], default: [] })
+  voiceCalls!: VoiceCallEntry[];
+
   /** Outbound VAPI dial attempts for no-answer / failed (max 2 before nurture). */
   @Prop({ default: 0 })
   voiceNoAnswerCount!: number;
@@ -86,7 +94,7 @@ export class Lead {
     outlookEventId?: string;
     status?: 'scheduled' | 'cancelled' | 'completed';
     completedAt?: Date;
-    bookedVia?: 'crm_bot' | 'crm_voice' | 'ghl_link';
+    bookedVia?: 'crm_bot' | 'crm_voice' | 'ghl_link' | 'crm_voice_ad_hoc';
     reminderJobIds?: string[];
   };
 
@@ -219,3 +227,4 @@ LeadSchema.index({
   company: 'text',
 });
 LeadSchema.index({ email: 1 }, { sparse: true });
+LeadSchema.index({ 'voiceCalls.vaaniCallId': 1 }, { sparse: true });

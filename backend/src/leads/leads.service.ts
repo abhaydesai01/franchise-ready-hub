@@ -2,8 +2,10 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Queue } from 'bullmq';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Lead, LeadDocument } from './schemas/lead.schema';
@@ -22,6 +24,14 @@ import { ActivitiesService } from '../activities/activities.service';
 import { PostCallPipelineService } from './post-call-pipeline.service';
 import type { PostCallNotesDto } from './dto/post-call-notes.dto';
 import { ProposalSendService } from '../proposals/proposal-send.service';
+import { CalendarService } from '../calendar/calendar.service';
+import { getSingletonBullConnection } from '../queues/redis-connection';
+import { applyVoiceEnrichmentFromVaaniApis } from '../voice/apply-voice-enrichment';
+import { VaaniService } from '../voice/vaani.service';
+import { GeminiVoiceScoringService } from '../voice/gemini-voice-scoring.service';
+import { VoicePipelineSyncService } from '../voice/voice-pipeline-sync.service';
+import { VoiceAdHocCalendarService } from '../voice/voice-ad-hoc-calendar.service';
+import type { VaaniTestCallDto } from './dto/vaani-test-call.dto';
 
 export interface LeadListResult {
   leads: Array<Lead & { _id: string }>;
@@ -30,6 +40,8 @@ export interface LeadListResult {
 
 @Injectable()
 export class LeadsService {
+  private readonly log = new Logger(LeadsService.name);
+
   constructor(
     @InjectModel(Lead.name) private readonly leadModel: Model<LeadDocument>,
     @InjectModel(Activity.name)
@@ -43,6 +55,11 @@ export class LeadsService {
     private readonly activitiesService: ActivitiesService,
     private readonly postCallPipeline: PostCallPipelineService,
     private readonly proposalSend: ProposalSendService,
+    private readonly calendar: CalendarService,
+    private readonly vaani: VaaniService,
+    private readonly geminiVoiceScoring: GeminiVoiceScoringService,
+    private readonly voicePipelineSync: VoicePipelineSyncService,
+    private readonly voiceAdHocCalendar: VoiceAdHocCalendarService,
   ) {}
 
   private async getThresholds() {
@@ -62,8 +79,13 @@ export class LeadsService {
     return 'Recruitment Only';
   }
 
+  private isAdminOrManager(user: CurrentUserPayload): boolean {
+    const r = String(user.role ?? '').toLowerCase();
+    return r === 'admin' || r === 'manager';
+  }
+
   private repScopeFilter(user: CurrentUserPayload): Record<string, unknown> {
-    if (user.role === 'admin' || user.role === 'manager') {
+    if (this.isAdminOrManager(user)) {
       return {};
     }
     const oid = new Types.ObjectId(user._id);
@@ -84,7 +106,7 @@ export class LeadsService {
     lead: Lead & { _id: string },
     user: CurrentUserPayload,
   ) {
-    if (user.role === 'admin' || user.role === 'manager') return;
+    if (this.isAdminOrManager(user)) return;
     const oid = String(user._id);
     const ownerMatches =
       lead.ownerId &&
@@ -198,7 +220,7 @@ export class LeadsService {
     }
 
     const ownerId =
-      dto.ownerId && (user.role === 'admin' || user.role === 'manager')
+      dto.ownerId && this.isAdminOrManager(user)
         ? new Types.ObjectId(dto.ownerId)
         : new Types.ObjectId(user._id);
 
@@ -276,7 +298,7 @@ export class LeadsService {
     }
 
     if (newOwnerId) {
-      if (user.role !== 'admin' && user.role !== 'manager') {
+      if (!this.isAdminOrManager(user)) {
         throw new ForbiddenException(
           'Only managers or admins can reassign ownerId via PATCH',
         );
@@ -857,5 +879,405 @@ export class LeadsService {
     }
 
     return out;
+  }
+
+  /**
+   * CRM: trigger a real Vaani outbound call, cache slots, append voiceCalls (same as voice worker / CLI script).
+   */
+  async triggerVaaniTestCall(
+    id: string,
+    user: CurrentUserPayload,
+    body?: VaaniTestCallDto,
+  ): Promise<Lead & { _id: string }> {
+    const lead = await this.findById(id, user);
+    const cfg = await this.vaani.getConfig();
+    if (!cfg) {
+      throw new BadRequestException(
+        'Vaani is not configured. Set VAANI_API_KEY and VAANI_AGENT_ID (optional outbound) or save in Settings → Integrations.',
+      );
+    }
+    const settings = await this.settingsModel.findOne().lean().exec();
+    const maxAttempts = Math.min(
+      5,
+      Math.max(1, (settings as { maxVoiceAttempts?: number } | null)?.maxVoiceAttempts ?? 2),
+    );
+    if ((lead.voiceCalls?.length ?? 0) >= maxAttempts) {
+      throw new BadRequestException(
+        `This lead already has ${maxAttempts} voice call attempt(s) (max in Settings).`,
+      );
+    }
+    const raw =
+      (body?.phoneOverride?.trim() && body.phoneOverride.trim().length > 0
+        ? body.phoneOverride.trim()
+        : lead.phone) ?? '';
+    if (!raw || raw.replace(/\D/g, '').length < 10) {
+      throw new BadRequestException(
+        'A valid phone number is required (set on the lead or pass phoneOverride).',
+      );
+    }
+    const contactNumber = this.toE164ForVoice(raw);
+
+    let slotsString: string;
+    try {
+      const slots = await this.calendar.getAvailableSlots('voice', 3);
+      await this.calendar.cacheVoiceSlots(id, slots);
+      slotsString = slots
+        .map((s) => `Option ${s.index}: ${s.label}`)
+        .join(', ');
+    } catch {
+      slotsString =
+        'Option 1: morning, Option 2: afternoon, Option 3: evening (set Calendar in Settings for live slots)';
+    }
+    const branding = settings as
+      | { branding?: { companyName?: string } }
+      | null
+      | undefined;
+    const companyName =
+      branding?.branding?.companyName?.trim() ||
+      process.env.COMPANY_NAME ||
+      'Franchise Ready';
+    const { callId, dispatchId } = await this.vaani.triggerCall({
+      leadId: id,
+      contactNumber,
+      leadName: lead.name,
+      triggerReason: 'intro_no_response',
+      readinessScore: Number(lead.totalScore ?? lead.score ?? 0),
+      readinessBand: this.readinessBandForVoice(lead),
+      availableSlots: slotsString,
+      companyName,
+    });
+    const voiceCallEntry: Record<string, unknown> = {
+      vaaniCallId: callId,
+      triggeredAt: new Date(),
+      triggerReason: 'intro_no_response',
+      status: 'initiated',
+    };
+    if (dispatchId) voiceCallEntry['vaaniDispatchId'] = dispatchId;
+    const updated = await this.leadModel
+      .findByIdAndUpdate(
+        id,
+        { $push: { voiceCalls: voiceCallEntry } },
+        { new: true },
+      )
+      .lean<(Lead & { _id: string }) | null>()
+      .exec();
+    if (!updated) {
+      throw new NotFoundException('Lead not found');
+    }
+    await this.activitiesService.logVoiceCall(
+      id,
+      lead.name,
+      `Vaani outbound from CRM (room: ${callId})`,
+    );
+    void this.schedulePostDispatchEnrichment(String(id), callId);
+    return updated;
+  }
+
+  /**
+   * Fetches `GET /api/call_details/{room}` and `GET /api/transcript/{room}` and persists on `voiceCalls[]`.
+   */
+  async refreshVoiceFromVaani(
+    id: string,
+    user: CurrentUserPayload,
+    callId: string,
+  ): Promise<Lead & { _id: string }> {
+    const lead0 = await this.findById(id, user);
+    const r = await applyVoiceEnrichmentFromVaaniApis(
+      this.leadModel,
+      this.vaani,
+      id,
+      callId,
+    );
+    if (r === 'not_configured') {
+      throw new BadRequestException(
+        'Vaani is not configured. Set API key and agent in Settings or env.',
+      );
+    }
+    if (r === 'not_found') {
+      throw new NotFoundException('That call is not linked to this lead.');
+    }
+    if (r === 'no_data') {
+      throw new BadRequestException(
+        'Vaani has no transcript or call details for this call yet. Try again shortly after the call ends.',
+      );
+    }
+    if (r === 'updated') {
+      await this.activitiesService.logVoiceCall(
+        id,
+        lead0.name,
+        `Voice call ${callId} — synced from Vaani (transcript, entities, summary)`,
+      );
+      const g = await this.geminiVoiceScoring.applyFromVoiceEnrichment(id, callId);
+      if (g === 'applied') {
+        this.log.log(`Gemini scorecard applied for lead ${id} (call ${callId})`);
+      }
+      await this.voicePipelineSync.afterVoiceDataSaved(id, callId);
+      await this.voiceAdHocCalendar.tryBookFromVoice(id, callId);
+    }
+    return this.findById(id, user);
+  }
+
+  private async schedulePostDispatchEnrichment(leadId: string, callId: string) {
+    let q: Queue | null = null;
+    try {
+      const conn = getSingletonBullConnection();
+      q = new Queue('voice-fallback', { connection: conn });
+      const safeId = String(callId).replace(/[^A-Za-z0-9_\-]/g, '_');
+      for (let i = 0; i < 5; i++) {
+        await q.add(
+          'vaani-enrich-call',
+          { leadId, callId, attempt: i + 1 },
+          {
+            delay: 30_000 + i * 45_000,
+            jobId: `vaani_enrich_${safeId}_${i + 1}`,
+            removeOnComplete: true,
+            attempts: 1,
+          },
+        );
+      }
+    } catch (e) {
+      this.log.warn('Could not schedule Vaani post-dispatch sync (is REDIS_URL set?)', e);
+    } finally {
+      if (q) await q.close();
+    }
+  }
+
+  /**
+   * Flat list of all Vaani `voiceCalls[]` entries (newest first), scoped like `list()`.
+   */
+  async listVoiceCallActivity(
+    user: CurrentUserPayload,
+    params?: { page?: number; limit?: number; search?: string },
+  ): Promise<{
+    items: Array<{
+      leadId: string;
+      leadName: string;
+      leadPhone: string;
+      leadStage: string;
+      leadTrack: string;
+      call: Record<string, unknown>;
+    }>;
+    total: number;
+  }> {
+    const page = Math.max(1, params?.page ?? 1);
+    const limit = Math.min(100, Math.max(1, params?.limit ?? 30));
+    const matchStage = this.buildVoiceActivityMatch(
+      user,
+      params?.search,
+    ) as Record<string, unknown>;
+    const pipeline: any[] = [
+      { $match: matchStage },
+      { $unwind: '$voiceCalls' },
+      { $sort: { 'voiceCalls.triggeredAt': -1 } },
+      {
+        $facet: {
+          data: [
+            { $skip: (page - 1) * limit },
+            { $limit: limit },
+            {
+              $project: {
+                _id: 0,
+                leadId: { $toString: '$_id' },
+                leadName: '$name',
+                leadPhone: '$phone',
+                leadStage: '$stage',
+                leadTrack: '$track',
+                call: '$voiceCalls',
+              },
+            },
+          ],
+          countArr: [{ $count: 'n' }],
+        },
+      },
+    ];
+    const agg = await this.leadModel.aggregate(pipeline).exec();
+    const first = Array.isArray(agg) && agg[0] ? (agg[0] as { data: unknown; countArr: { n: number }[] }) : { data: [], countArr: [] };
+    const items = (first.data ?? []) as Array<{
+      leadId: string;
+      leadName: string;
+      leadPhone: string;
+      leadStage: string;
+      leadTrack: string;
+      call: Record<string, unknown>;
+    }>;
+    const total = first.countArr?.[0]?.n ?? 0;
+    return { items, total };
+  }
+
+  private buildVoiceActivityMatch(
+    user: CurrentUserPayload,
+    search?: string,
+  ): Record<string, unknown> {
+    const scope = this.repScopeFilter(user);
+    /** Use $expr / $size so we never miss non-empty `voiceCalls` arrays. */
+    const hasVoice: Record<string, unknown> = {
+      $expr: { $gt: [{ $size: { $ifNull: ['$voiceCalls', []] } }, 0] },
+    };
+    const parts: Record<string, unknown>[] = [hasVoice];
+    if (Object.keys(scope).length > 0) {
+      parts.unshift(scope);
+    }
+    const t = search?.trim();
+    if (t) {
+      const safe = this.escapeRegExp(t);
+      parts.push({
+        $or: [
+          { name: { $regex: safe, $options: 'i' } },
+          { phone: { $regex: safe, $options: 'i' } },
+        ],
+      });
+    }
+    if (parts.length === 1) {
+      return parts[0] as Record<string, unknown>;
+    }
+    return { $and: parts } as Record<string, unknown>;
+  }
+
+  private escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private toE164ForVoice(phone: string): string {
+    const d = phone.replace(/\D/g, '');
+    if (d.length >= 10 && d.startsWith('91')) return `+${d}`;
+    if (d.length === 10) return `+91${d}`;
+    if (phone.trim().startsWith('+')) return phone.trim();
+    return `+${d}`;
+  }
+
+  private readinessBandForVoice(lead: Lead): string {
+    const b = lead.readinessBand;
+    if (!b) return 'pending';
+    const map: Record<string, string> = {
+      franchise_ready: 'Franchise Ready',
+      recruitment_only: 'Recruitment Only',
+      not_ready: 'Not Ready',
+    };
+    return map[b] ?? String(b);
+  }
+
+  /**
+   * Removes a lead the user can access, plus in-scope activities and automation rows.
+   * Best-effort free busy cancel if a discovery call exists.
+   */
+  async remove(
+    id: string,
+    user: CurrentUserPayload,
+  ): Promise<{ ok: true }> {
+    await this.findById(id, user);
+    try {
+      await this.calendar.cancelBooking(id);
+    } catch {
+      // No calendar booking, or not cancellable
+    }
+    await this.activityModel.deleteMany({ leadId: id });
+    await this.automationLogModel.deleteMany({ leadId: id });
+    const r = await this.leadModel.findByIdAndDelete(id).exec();
+    if (!r) {
+      throw new NotFoundException('Lead not found');
+    }
+    this.log.log(`Lead deleted id=${id}`);
+    return { ok: true };
+  }
+
+  async removeMany(
+    leadIds: string[],
+    user: CurrentUserPayload,
+  ): Promise<{ ok: true; removed: number }> {
+    let removed = 0;
+    for (const id of leadIds) {
+      try {
+        await this.remove(id, user);
+        removed += 1;
+      } catch (e) {
+        this.log.warn(`removeMany skip id=${id}`, e);
+      }
+    }
+    return { ok: true, removed };
+  }
+
+  /**
+   * Creates many leads; each row is a loose object (e.g. from CSV). Per-row errors do not block others.
+   */
+  async importMany(
+    rows: unknown[],
+    user: CurrentUserPayload,
+  ): Promise<{
+    created: number;
+    failed: Array<{ index: number; name?: string; message: string }>;
+  }> {
+    const failed: Array<{ index: number; name?: string; message: string }> = [];
+    let created = 0;
+    if (!Array.isArray(rows) || rows.length > 500) {
+      throw new BadRequestException('Import between 1 and 500 leads');
+    }
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        failed.push({ index: i, message: 'Invalid row' });
+        continue;
+      }
+      const o = row as Record<string, unknown>;
+      const name = String(
+        o.name ?? o.Name ?? o.full_name ?? o.Full_name ?? '',
+      ).trim();
+      if (!name) {
+        failed.push({ index: i, message: 'name is required' });
+        continue;
+      }
+      const phone =
+        o.phone != null
+          ? String(o.phone)
+          : o.Phone != null
+            ? String(o.Phone)
+            : o.mobile != null
+              ? String(o.mobile)
+              : undefined;
+      const rawEmail =
+        o.email != null
+          ? String(o.email).trim()
+          : o.Email != null
+            ? String(o.Email).trim()
+            : undefined;
+      const email =
+        rawEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)
+          ? rawEmail
+          : undefined;
+      const company =
+        o.company != null
+          ? String(o.company)
+          : o.Company != null
+            ? String(o.Company)
+            : undefined;
+      const source = String(
+        o.source != null
+          ? o.source
+          : o.Source != null
+            ? o.Source
+            : o.lead_source ?? 'Other',
+      );
+      const notes =
+        o.notes != null
+          ? String(o.notes)
+          : o.Notes != null
+            ? String(o.Notes)
+            : undefined;
+      const dto: CreateLeadDto = {
+        name,
+        phone: phone?.replace(/\r/g, '').trim() || undefined,
+        email: email as CreateLeadDto['email'],
+        company: company || undefined,
+        source: source || 'Other',
+        notes: notes || undefined,
+      };
+      try {
+        await this.create(dto, user);
+        created += 1;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Unknown error';
+        failed.push({ index: i, name, message: msg });
+      }
+    }
+    return { created, failed };
   }
 }

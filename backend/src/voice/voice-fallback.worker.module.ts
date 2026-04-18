@@ -6,6 +6,13 @@ import { validate } from '../config/validation';
 import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 import { SettingsModule } from '../settings/settings.module';
 import { VoiceAgentService } from './voice-agent.service';
+import { VaaniModule } from './vaani.module';
+import { CalendarModule } from '../calendar/calendar.module';
+import { ActivitiesModule } from '../activities/activities.module';
+import { NurtureQueueService } from './nurture-queue.service';
+import { GeminiScoringModule } from './gemini-scoring.module';
+import { VoicePipelineSyncModule } from './voice-pipeline-sync.module';
+import { VoiceAdHocCalendarModule } from './voice-ad-hoc-calendar.module';
 
 @Module({
   imports: [
@@ -21,7 +28,13 @@ import { VoiceAgentService } from './voice-agent.service';
     }),
     MongooseModule.forFeature([{ name: Lead.name, schema: LeadSchema }]),
     SettingsModule,
+    CalendarModule,
+    ActivitiesModule,
+    VaaniModule,
+    GeminiScoringModule,
+    VoicePipelineSyncModule,
+    VoiceAdHocCalendarModule,
   ],
-  providers: [VoiceAgentService],
+  providers: [VoiceAgentService, NurtureQueueService],
 })
 export class VoiceFallbackWorkerModule {}

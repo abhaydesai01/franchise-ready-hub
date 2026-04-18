@@ -21,6 +21,8 @@ import type {
   UpcomingCallRow,
   PipelineStageDefinition,
   WAConversation,
+  VoiceCallEntry,
+  VoiceCallActivityItem,
 } from '@/types';
 import type { ReEngagementLog, ReEngagementRule, SalesAlert } from '@/types/sales';
 import type {
@@ -154,6 +156,70 @@ function mapLeadSource(source: unknown): Lead['source'] {
   return 'Other';
 }
 
+function mapOneVoiceCallEntry(item: unknown): VoiceCallEntry | null {
+  if (!item || typeof item !== 'object') return null;
+  const o = item as Record<string, unknown>;
+  const ta = o.triggeredAt;
+  const triggeredAt =
+    typeof ta === 'string' ? ta : ta instanceof Date ? ta.toISOString() : '';
+  const ca = o.completedAt;
+  const completedAt =
+    typeof ca === 'string' ? ca : ca instanceof Date ? ca.toISOString() : undefined;
+  const cba = o.callbackRequestedAt;
+  const callbackRequestedAt =
+    typeof cba === 'string'
+      ? cba
+      : cba instanceof Date
+        ? cba.toISOString()
+        : undefined;
+  const cev = o.conversationEval;
+  const conversationEval =
+    cev && typeof cev === 'object' && !Array.isArray(cev)
+      ? (cev as Record<string, unknown>)
+      : undefined;
+  const lea = o.lastEnrichedAt;
+  const lastEnrichedAt =
+    typeof lea === 'string'
+      ? lea
+      : lea instanceof Date
+        ? lea.toISOString()
+        : undefined;
+  return {
+    vaaniCallId: String(o.vaaniCallId ?? ''),
+    vaaniDispatchId: o.vaaniDispatchId != null ? String(o.vaaniDispatchId) : undefined,
+    triggeredAt,
+    triggerReason: String(o.triggerReason ?? ''),
+    status: String(o.status ?? ''),
+    duration: Number(o.duration ?? 0),
+    transcript: String(o.transcript ?? ''),
+    summary: String(o.summary ?? ''),
+    sentiment: String(o.sentiment ?? ''),
+    entities:
+      o.entities && typeof o.entities === 'object' && !Array.isArray(o.entities)
+        ? (o.entities as Record<string, unknown>)
+        : {},
+    conversationEval,
+    callEvalTag: o.callEvalTag != null ? String(o.callEvalTag) : undefined,
+    recordingUrl: String(o.recordingUrl ?? ''),
+    outcome: String(o.outcome ?? ''),
+    callbackRequestedAt,
+    slotOfferedIndex:
+      o.slotOfferedIndex == null ? undefined : Number(o.slotOfferedIndex),
+    completedAt,
+    lastEnrichedAt,
+  };
+}
+
+function mapVoiceCalls(raw: unknown): VoiceCallEntry[] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const out: VoiceCallEntry[] = [];
+  for (const item of raw) {
+    const m = mapOneVoiceCallEntry(item);
+    if (m) out.push(m);
+  }
+  return out.length ? out : undefined;
+}
+
 function mapLeadFromApi(raw: unknown): Lead {
   const row = raw as Record<string, unknown> & { _id: unknown };
   const pid = row.pipelineStageId;
@@ -193,6 +259,7 @@ function mapLeadFromApi(raw: unknown): Lead {
     discoveryCall: mapDiscoveryCall(row.discoveryCall),
     callNotes: mapCallNotes(row.callNotes),
     documents: mapLeadDocuments(row.documents),
+    voiceCalls: mapVoiceCalls(row.voiceCalls),
   };
 }
 
@@ -380,6 +447,36 @@ export async function fetchLeads(params?: {
   return { leads: result.leads.map(mapLeadFromApi), total: result.total };
 }
 
+export async function fetchVoiceCallActivity(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+}): Promise<{ items: VoiceCallActivityItem[]; total: number }> {
+  const sp = new URLSearchParams();
+  if (params?.page) sp.set('page', String(params.page));
+  if (params?.limit) sp.set('limit', String(params.limit));
+  if (params?.search?.trim()) sp.set('search', params.search.trim());
+  const q = sp.toString();
+  const raw = await apiRequest<{ items: unknown[]; total: number }>(
+    `/leads/voice-calls${q ? `?${q}` : ''}`,
+  );
+  const items: VoiceCallActivityItem[] = [];
+  for (const row of raw.items ?? []) {
+    const r = row as Record<string, unknown>;
+    const call = mapOneVoiceCallEntry(r['call']);
+    if (!call?.vaaniCallId) continue;
+    items.push({
+      leadId: String(r.leadId ?? ''),
+      leadName: String(r.leadName ?? ''),
+      leadPhone: String(r.leadPhone ?? ''),
+      leadStage: String(r.leadStage ?? ''),
+      leadTrack: String(r.leadTrack ?? ''),
+      call,
+    });
+  }
+  return { items, total: raw.total ?? 0 };
+}
+
 export async function fetchLead(id: string): Promise<Lead> {
   const lead = await apiRequest<unknown>(`/leads/${id}`);
   return mapLeadFromApi(lead);
@@ -485,6 +582,29 @@ export async function createLead(data: Partial<Lead>): Promise<Lead> {
     }),
   });
   return mapLeadFromApi(created);
+}
+
+export async function deleteLead(id: string): Promise<void> {
+  await apiRequest(`/leads/${id}`, { method: 'DELETE' });
+}
+
+export async function deleteLeadsBulk(leadIds: string[]): Promise<{ ok: true; removed: number }> {
+  return apiRequest('/leads/bulk-delete', {
+    method: 'POST',
+    body: JSON.stringify({ leadIds }),
+  });
+}
+
+export async function importLeads(
+  leads: unknown[],
+): Promise<{
+  created: number;
+  failed: Array<{ index: number; name?: string; message: string }>;
+}> {
+  return apiRequest('/leads/import', {
+    method: 'POST',
+    body: JSON.stringify({ leads }),
+  });
 }
 
 export async function fetchPipelineStages(track?: string): Promise<PipelineStageDefinition[]> {
@@ -864,6 +984,10 @@ export function normalizeSettingsFromApi(row: Partial<Settings> & { _id?: string
   return {
     calendlyLink: row.calendlyLink ?? '',
     calendlyWebhookSigningKey: row.calendlyWebhookSigningKey ?? '',
+    voiceFallbackDelayMinutes: row.voiceFallbackDelayMinutes ?? 30,
+    maxVoiceAttempts: row.maxVoiceAttempts ?? 2,
+    vaaniAgentId: row.vaaniAgentId ?? '',
+    vaaniOutboundNumber: row.vaaniOutboundNumber ?? '',
     thresholds: row.thresholds!,
     alertRules: row.alertRules!,
     integrations: row.integrations ?? [],
@@ -1012,10 +1136,41 @@ export async function updateIntegrationSetting(
 
 export async function testIntegrationSetting(
   id: string,
-): Promise<{ ok: boolean; connected: boolean }> {
+): Promise<{ ok: boolean; connected?: boolean; message?: string }> {
   return apiRequest(`/settings/integrations/${id}/test`, {
     method: 'POST',
   });
+}
+
+export async function fetchLeadVoiceRecordingUrl(
+  leadId: string,
+  vaaniCallId: string,
+): Promise<{ url: string }> {
+  return apiRequest<{ url: string }>(
+    `/leads/${leadId}/voice-calls/${encodeURIComponent(vaaniCallId)}/recording-url`,
+  );
+}
+
+export async function triggerVaaniTestCall(
+  leadId: string,
+  body?: { phoneOverride?: string },
+): Promise<Lead> {
+  const raw = await apiRequest<unknown>(`/leads/${leadId}/vaani/test-call`, {
+    method: 'POST',
+    body: JSON.stringify(body && Object.keys(body).length ? body : {}),
+  });
+  return mapLeadFromApi(raw);
+}
+
+export async function refreshLeadVoiceFromVaani(
+  leadId: string,
+  vaaniCallId: string,
+): Promise<Lead> {
+  const id = encodeURIComponent(vaaniCallId);
+  const raw = await apiRequest<unknown>(`/leads/${leadId}/vaani/refresh/${id}`, {
+    method: 'POST',
+  });
+  return mapLeadFromApi(raw);
 }
 
 // Activities (global)

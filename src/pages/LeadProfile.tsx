@@ -7,7 +7,7 @@ import {
 } from '@/hooks/useLeads';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { ArrowLeft, Phone, FileText, ChevronDown, MessageCircle } from 'lucide-react';
+import { ArrowLeft, Phone, FileText, ChevronDown, MessageCircle, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -19,6 +19,8 @@ import { JourneyTimeline } from '@/components/crm/JourneyTimeline';
 import { WhatsAppChat } from '@/components/crm/WhatsAppChat';
 import { CampaignCard } from '@/components/crm/CampaignCard';
 import { SkeletonCard } from '@/components/crm/SkeletonCard';
+import { LeadVoiceCallsPanel } from '@/components/crm/LeadVoiceCallsPanel';
+import { DispatchVaaniCallButton } from '@/components/crm/DispatchVaaniCallButton';
 import { toast } from 'sonner';
 
 export default function LeadProfile() {
@@ -34,6 +36,13 @@ export default function LeadProfile() {
 
   if (isLoading) return <div className="max-w-5xl mx-auto space-y-4"><SkeletonCard /><SkeletonCard /><SkeletonCard /></div>;
   if (!lead) return <div className="text-center py-16 text-brand-muted">Lead not found</div>;
+
+  const defaultActivityTab =
+    (lead.voiceCalls?.length ?? 0) > 0
+      ? 'voice'
+      : journeyEvents.length > 0
+        ? 'journey'
+        : 'activity';
 
   const handleAddNote = async () => {
     if (!noteText.trim()) return;
@@ -67,9 +76,18 @@ export default function LeadProfile() {
           </div>
           <ScoreBadge score={lead.score} size="md" />
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button variant="outline" size="sm" className="text-[12px] border-brand-border gap-1.5">
             <Phone className="w-3.5 h-3.5" /> Book Call
+          </Button>
+          <DispatchVaaniCallButton leadId={lead.id} />
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-[12px] border-brand-border gap-1.5"
+            onClick={() => navigate('/settings')}
+          >
+            <Settings className="w-3.5 h-3.5" /> Optimizer settings
           </Button>
           <Button size="sm" className="text-[12px] bg-brand-crimson hover:bg-brand-crimson-dk text-white gap-1.5">
             <FileText className="w-3.5 h-3.5" /> Send Proposal
@@ -183,8 +201,8 @@ export default function LeadProfile() {
         {/* Right Column — 3/5 */}
         <div className="lg:col-span-3 space-y-6">
           <div className="bg-white rounded-[10px] border border-brand-border p-6">
-            <Tabs defaultValue={journeyEvents.length > 0 ? 'journey' : 'activity'}>
-              <TabsList className="bg-brand-surface mb-4">
+            <Tabs key={`${lead.id}-tabs`} defaultValue={defaultActivityTab}>
+              <TabsList className="bg-brand-surface mb-4 flex-wrap h-auto gap-1">
                 {journeyEvents.length > 0 && (
                   <TabsTrigger value="journey" className="text-[12px]">
                     Journey ({journeyEvents.length})
@@ -198,6 +216,9 @@ export default function LeadProfile() {
                     WhatsApp ({conversation.totalMessages})
                   </TabsTrigger>
                 )}
+                <TabsTrigger value="voice" className="text-[12px]">
+                  Voice ({lead.voiceCalls?.length ?? 0})
+                </TabsTrigger>
               </TabsList>
 
               {journeyEvents.length > 0 && (
@@ -223,6 +244,10 @@ export default function LeadProfile() {
                   <WhatsAppChat conversation={conversation} />
                 </TabsContent>
               )}
+
+              <TabsContent value="voice" className="mt-0">
+                <LeadVoiceCallsPanel lead={lead} />
+              </TabsContent>
             </Tabs>
           </div>
         </div>

@@ -1,7 +1,11 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -19,9 +23,12 @@ import { UpdateLeadStatusDto } from './dto/update-lead-status.dto';
 import { UpdateLeadOwnerDto } from './dto/update-lead-owner.dto';
 import { DiscoveryCallPatchDto } from './dto/discovery-call-patch.dto';
 import { PostCallNotesDto } from './dto/post-call-notes.dto';
+import { VaaniTestCallDto } from './dto/vaani-test-call.dto';
+import { BulkDeleteLeadsDto } from './dto/bulk-import-leads.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
+import { VaaniService } from '../voice/vaani.service';
 
 @Controller('leads')
 @UseGuards(JwtAuthGuard)
@@ -30,6 +37,7 @@ export class LeadsController {
     private readonly leadsService: LeadsService,
     private readonly briefingService: BriefingService,
     private readonly briefingPdfService: BriefingPdfService,
+    private readonly vaani: VaaniService,
   ) {}
 
   @Get()
@@ -61,6 +69,42 @@ export class LeadsController {
   @Get('health')
   async health(@CurrentUser() user: CurrentUserPayload) {
     return this.leadsService.healthMap(user);
+  }
+
+  @Post('import')
+  @HttpCode(200)
+  async importLeads(
+    @Body() body: { leads: unknown[] },
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    if (!Array.isArray(body?.leads)) {
+      throw new BadRequestException('Body must include a "leads" array');
+    }
+    return this.leadsService.importMany(body.leads, user);
+  }
+
+  @Post('bulk-delete')
+  @HttpCode(200)
+  async bulkDelete(
+    @Body() body: BulkDeleteLeadsDto,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.leadsService.removeMany(body.leadIds, user);
+  }
+
+  /** All Vaani voice call attempts across leads (newest first, paginated). */
+  @Get('voice-calls')
+  async listVoiceCallActivity(
+    @CurrentUser() user: CurrentUserPayload,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.leadsService.listVoiceCallActivity(user, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      search: search?.trim() || undefined,
+    });
   }
 
   @Get(':id/briefing/pdf')
@@ -96,6 +140,52 @@ export class LeadsController {
     @CurrentUser() user: CurrentUserPayload,
   ) {
     return this.leadsService.whatsappConversation(id, user);
+  }
+
+  /** JSON with Vaani stream URL (JWT in header; use this from the CRM to open recording in a new tab). */
+  @Get(':id/voice-calls/:callId/recording-url')
+  async voiceRecordingUrl(
+    @Param('id') id: string,
+    @Param('callId') callId: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    const lead = await this.leadsService.findById(id, user);
+    const ok = (lead.voiceCalls ?? []).some((v) => v.vaaniCallId === callId);
+    if (!ok) throw new NotFoundException('Voice call not found');
+    const url = await this.vaani.getRecordingStreamUrl(callId);
+    if (!url) throw new NotFoundException('Recording not available');
+    return { url };
+  }
+
+  /** Triggers a Vaani outbound test call; records `voiceCalls` and logs. Requires Vaani in Settings. */
+  @Post(':id/vaani/test-call')
+  @HttpCode(200)
+  async triggerVaaniTestCall(
+    @Param('id') id: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() body: VaaniTestCallDto = {},
+  ) {
+    return this.leadsService.triggerVaaniTestCall(id, user, body);
+  }
+
+  /** Pulls transcript + call_details from Vaani and updates `voiceCalls[]` in MongoDB. */
+  @Post(':id/vaani/refresh/:callId')
+  @HttpCode(200)
+  async refreshVoiceFromVaani(
+    @Param('id') id: string,
+    @Param('callId') callId: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.leadsService.refreshVoiceFromVaani(id, user, callId);
+  }
+
+  @Delete(':id')
+  @HttpCode(200)
+  async remove(
+    @Param('id') id: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.leadsService.remove(id, user);
   }
 
   @Get(':id')

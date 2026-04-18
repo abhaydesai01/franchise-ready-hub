@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import {
   fetchLeads,
   fetchLead,
@@ -11,11 +11,25 @@ import {
   fetchLeadConversation,
   fetchLeadHealthMap,
   fetchLeadBriefing,
+  triggerVaaniTestCall,
+  refreshLeadVoiceFromVaani,
+  deleteLead,
+  deleteLeadsBulk,
+  importLeads,
 } from '@/lib/api';
 import type { Lead } from '@/types';
 
-export function useLeads(params?: { track?: string; stage?: string; search?: string; assignedTo?: string; page?: number; limit?: number }) {
-  return useQuery({ queryKey: ['leads', params], queryFn: () => fetchLeads(params) });
+type LeadsListData = { leads: Lead[]; total: number };
+
+export function useLeads(
+  params?: { track?: string; stage?: string; search?: string; assignedTo?: string; page?: number; limit?: number },
+  options?: Omit<UseQueryOptions<LeadsListData, Error, LeadsListData>, 'queryKey' | 'queryFn'>,
+) {
+  return useQuery<LeadsListData, Error>({
+    queryKey: ['leads', params],
+    queryFn: () => fetchLeads(params),
+    ...options,
+  });
 }
 
 export function useLead(id: string) {
@@ -94,5 +108,72 @@ export function useAddLeadNote() {
   return useMutation({
     mutationFn: ({ leadId, text, addedBy }: { leadId: string; text: string; addedBy: string }) => addLeadNote(leadId, text, addedBy),
     onSuccess: (_, vars) => { qc.invalidateQueries({ queryKey: ['leadActivity', vars.leadId] }); qc.invalidateQueries({ queryKey: ['activities'] }); },
+  });
+}
+
+export function useTriggerVaaniTestCall() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { leadId: string; phoneOverride?: string }) =>
+      triggerVaaniTestCall(
+        vars.leadId,
+        vars.phoneOverride ? { phoneOverride: vars.phoneOverride } : undefined,
+      ),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['lead', vars.leadId] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['leadActivity', vars.leadId] });
+      qc.invalidateQueries({ queryKey: ['voiceCallActivity'] });
+    },
+  });
+}
+
+export function useRefreshLeadVoiceFromVaani() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { leadId: string; vaaniCallId: string }) =>
+      refreshLeadVoiceFromVaani(vars.leadId, vars.vaaniCallId),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['lead', vars.leadId] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['leadActivity', vars.leadId] });
+      qc.invalidateQueries({ queryKey: ['voiceCallActivity'] });
+    },
+  });
+}
+
+export function useDeleteLead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteLead(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['leadHealthMap'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+export function useDeleteLeadsBulk() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (leadIds: string[]) => deleteLeadsBulk(leadIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['leadHealthMap'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+export function useImportLeads() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rows: unknown[]) => importLeads(rows),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['leadHealthMap'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
   });
 }

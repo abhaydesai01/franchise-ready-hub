@@ -28,7 +28,7 @@ import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { MessageCircle, Mail, Zap, Globe, Calendar, Eye, EyeOff, CheckCircle, XCircle, Trash2 } from 'lucide-react';
+import { MessageCircle, Mail, Zap, Globe, Calendar, Eye, EyeOff, CheckCircle, XCircle, Trash2, Phone } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   WATemplate,
@@ -38,7 +38,7 @@ import type {
 } from '@/types';
 
 const integrationIcons: Record<string, React.ElementType> = {
-  MessageCircle, Calendar, Mail, Zap, Globe
+  MessageCircle, Calendar, Mail, Zap, Globe, Phone
 };
 
 const settingsTabs = [
@@ -110,6 +110,10 @@ export default function SettingsPage() {
   const [calendlySigningKey, setCalendlySigningKey] = useState('');
   const [avDraft, setAvDraft] = useState<AvailabilitySettings | null>(null);
   const [testSlotPreview, setTestSlotPreview] = useState<string | null>(null);
+  const [voiceDelayMin, setVoiceDelayMin] = useState(30);
+  const [voiceMaxAttempts, setVoiceMaxAttempts] = useState(2);
+  const [vaaniAgentIdDraft, setVaaniAgentIdDraft] = useState('');
+  const [vaaniOutboundDraft, setVaaniOutboundDraft] = useState('');
 
   useEffect(() => {
     if (!settings) return;
@@ -130,6 +134,10 @@ export default function SettingsPage() {
         ),
       ) as AvailabilitySettings,
     );
+    setVoiceDelayMin(settings.voiceFallbackDelayMinutes ?? 30);
+    setVoiceMaxAttempts(settings.maxVoiceAttempts ?? 2);
+    setVaaniAgentIdDraft(settings.vaaniAgentId ?? '');
+    setVaaniOutboundDraft(settings.vaaniOutboundNumber ?? '');
   }, [settings]);
 
   useEffect(() => {
@@ -222,11 +230,29 @@ export default function SettingsPage() {
 
   const runIntegrationTest = async (id: string) => {
     const result = await testIntegration.mutateAsync(id);
-    toast.success(
+    if (result.message) {
+      toast[result.ok ? 'success' : 'error'](result.message);
+      return;
+    }
+    toast[result.connected ? 'success' : 'error'](
       result.connected
         ? 'Connection test passed'
         : 'Connection test failed: missing API key',
     );
+  };
+
+  const saveVaaniIntegration = async () => {
+    await updateIntegration.mutateAsync({
+      id: 'i6',
+      data: { apiKey: integrationApiKeys.i6 ?? '' },
+    });
+    await updateSettings.mutateAsync({
+      voiceFallbackDelayMinutes: voiceDelayMin,
+      maxVoiceAttempts: voiceMaxAttempts,
+      vaaniAgentId: vaaniAgentIdDraft.trim(),
+      vaaniOutboundNumber: vaaniOutboundDraft.trim(),
+    });
+      toast.success('Optimizer voice settings saved');
   };
 
   const redirectCalendarConnect = (which: 'google' | 'outlook') => {
@@ -550,8 +576,127 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            <div className="bg-white rounded-[10px] border border-brand-border p-5 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-brand-surface flex items-center justify-center">
+                  <Phone className="w-5 h-5 text-brand-ink" />
+                </div>
+                <div>
+                  <h3 className="text-[15px] font-semibold text-brand-ink">Optimizer Voice Agent</h3>
+                  <p className="text-[12px] text-brand-muted mt-0.5">
+                    Outbound calls when WhatsApp goes quiet. Keys can live in server{' '}
+                    <code className="text-[11px]">.env</code> or here; webhook:{' '}
+                    <code className="text-[11px] break-all">
+                      {`${getApiBase()}/webhooks/vaani`}
+                    </code>
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[12px] text-brand-muted">Voice fallback delay</label>
+                  <Select
+                    value={String(voiceDelayMin)}
+                    onValueChange={(v) => setVoiceDelayMin(Number(v))}
+                  >
+                    <SelectTrigger className="mt-1 h-9 border-brand-border text-[13px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="15">15 minutes</SelectItem>
+                      <SelectItem value="30">30 minutes</SelectItem>
+                      <SelectItem value="45">45 minutes</SelectItem>
+                      <SelectItem value="60">60 minutes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-[12px] text-brand-muted">Max voice attempts</label>
+                  <Select
+                    value={String(voiceMaxAttempts)}
+                    onValueChange={(v) => setVoiceMaxAttempts(Number(v))}
+                  >
+                    <SelectTrigger className="mt-1 h-9 border-brand-border text-[13px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1</SelectItem>
+                      <SelectItem value="2">2</SelectItem>
+                      <SelectItem value="3">3</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[12px] text-brand-muted">API key</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <Input
+                    type={showApiKeys.i6 ? 'text' : 'password'}
+                    value={integrationApiKeys.i6 ?? ''}
+                    onChange={(e) =>
+                      setIntegrationApiKeys((prev) => ({ ...prev, i6: e.target.value }))
+                    }
+                    placeholder="e.g. vaani_… (from provider)"
+                    className="text-[12px] border-brand-border h-9 font-mono flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKeys((prev) => ({ ...prev, i6: !prev.i6 }))}
+                    className="p-1.5 hover:bg-brand-surface rounded"
+                  >
+                    {showApiKeys.i6 ? (
+                      <EyeOff className="w-4 h-4 text-brand-muted" />
+                    ) : (
+                      <Eye className="w-4 h-4 text-brand-muted" />
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[12px] text-brand-muted">Agent ID (UUID)</label>
+                  <Input
+                    value={vaaniAgentIdDraft}
+                    onChange={(e) => setVaaniAgentIdDraft(e.target.value)}
+                    placeholder="From Optimizer / provider → Agent ID"
+                    className="mt-1 border-brand-border h-9 text-[13px] font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[12px] text-brand-muted">
+                    Outbound caller ID (optional)
+                  </label>
+                  <Input
+                    value={vaaniOutboundDraft}
+                    onChange={(e) => setVaaniOutboundDraft(e.target.value)}
+                    placeholder="Leave empty to use provider default"
+                    className="mt-1 border-brand-border h-9 text-[13px]"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  className="bg-brand-crimson hover:bg-brand-crimson-dk text-white text-[13px]"
+                  type="button"
+                  onClick={() => void saveVaaniIntegration()}
+                  disabled={updateSettings.isPending || updateIntegration.isPending}
+                >
+                  Save Optimizer settings
+                </Button>
+                <Button
+                  variant="outline"
+                  type="button"
+                  className="border-brand-border text-[13px]"
+                  disabled={testIntegration.isPending}
+                  onClick={() => void runIntegrationTest('i6')}
+                >
+                  Test connection
+                </Button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {settings.integrations.map(int => {
+            {settings.integrations.filter((int) => int.id !== 'i6').map(int => {
               const iconName = int.icon as keyof typeof integrationIcons;
               const Icon = integrationIcons[iconName] || Globe;
               return (

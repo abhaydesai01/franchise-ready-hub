@@ -1,1 +1,1 @@
-{"version":1,"functions":{"/api/webhooks/whatsapp":{},"/api/webhooks/calendly":{},"/api/leads/[id]/whatsapp":{},"/api/webhooks/meta":{},"/api/whatsapp/send":{}}}
+{"version":1,"functions":{"/api/webhooks/whatsapp":{},"/api/leads/[id]/whatsapp":{},"/api/webhooks/meta":{},"/api/webhooks/calendly":{},"/api/whatsapp/send":{}}}

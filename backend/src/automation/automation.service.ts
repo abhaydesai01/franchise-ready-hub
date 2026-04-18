@@ -67,7 +67,33 @@ export class AutomationService {
 
   async listSequences() {
     await this.ensureSequences();
-    return this.sequenceModel.find().sort({ name: 1 }).lean().exec();
+    await this.ensureLogs();
+    const [rows, lastBySequence, distinctBySequence] = await Promise.all([
+      this.sequenceModel.find().sort({ name: 1 }).lean().exec(),
+      this.logModel
+        .aggregate<{ _id: string; last: Date }>([
+          { $group: { _id: '$sequenceName', last: { $max: '$sentAt' } } },
+        ])
+        .exec(),
+      this.logModel
+        .aggregate<{ _id: string; n: number }>([
+          { $group: { _id: { s: '$sequenceName', l: '$leadId' } } },
+          { $group: { _id: '$_id.s', n: { $sum: 1 } } },
+        ])
+        .exec(),
+    ]);
+
+    const lastMap = new Map(lastBySequence.map((x) => [x._id, x.last]));
+    const distinctMap = new Map(
+      distinctBySequence.map((x) => [x._id, x.n]),
+    );
+
+    return rows.map((doc) => {
+      const name = doc.name;
+      const activeLeads = distinctMap.get(name) ?? 0;
+      const last = lastMap.get(name) ?? null;
+      return { ...doc, activeLeads, lastTriggered: last };
+    });
   }
 
   async updateSequence(id: string, dto: UpdateAutomationSequenceDto) {

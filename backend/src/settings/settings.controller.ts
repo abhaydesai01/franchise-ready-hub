@@ -9,13 +9,17 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SettingsService } from './settings.service';
+import { VaaniService } from '../voice/vaani.service';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { UpdateAvailabilityDto } from './dto/update-availability.dto';
 
 @Controller('settings')
 @UseGuards(JwtAuthGuard)
 export class SettingsController {
-  constructor(private readonly settingsService: SettingsService) {}
+  constructor(
+    private readonly settingsService: SettingsService,
+    private readonly vaani: VaaniService,
+  ) {}
 
   @Get()
   getSettings() {
@@ -42,6 +46,7 @@ export class SettingsController {
 
   @Post('integrations/:id/test')
   testIntegration(@Param('id') id: string) {
+    if (id === 'i6') return this.vaani.testConnection();
     return this.settingsService.testIntegration(id);
   }
 

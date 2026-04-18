@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Headers,
   HttpCode,
   Post,
   Req,
@@ -9,12 +10,14 @@ import {
 import type { Request } from 'express';
 import { CalendlyWebhookService } from '../calendly/calendly-webhook.service';
 import { CalendarService } from '../calendar/calendar.service';
+import { VaaniWebhookService } from '../voice/vaani-webhook.service';
 
 @Controller('webhooks')
 export class WebhooksController {
   constructor(
     private readonly calendlyWebhook: CalendlyWebhookService,
     private readonly calendar: CalendarService,
+    private readonly vaaniWebhook: VaaniWebhookService,
   ) {}
 
   @Post('calendly')
@@ -27,6 +30,17 @@ export class WebhooksController {
     const h = req.headers['calendly-webhook-signature'];
     const signature = Array.isArray(h) ? h[0] : h;
     return this.calendlyWebhook.handleWebhook(raw, signature);
+  }
+
+  /** Vaani Voice — call lifecycle + post-processing (configure secret in portal + VAANI_WEBHOOK_SECRET). */
+  @Post('vaani')
+  @HttpCode(200)
+  async vaani(
+    @Req() req: Request & { rawBody?: Buffer },
+    @Body() body: Record<string, unknown>,
+    @Headers() headers: Record<string, string | string[] | undefined>,
+  ) {
+    return this.vaaniWebhook.handle(body, headers, req.rawBody);
   }
 
   /** GHL / external booking — creates CRM-native Meet + reminders (idempotent best-effort). */

@@ -7,8 +7,9 @@ import { SkeletonTable } from '@/components/crm/SkeletonCard';
 import { EmptyState } from '@/components/crm/EmptyState';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { ExternalLink, Calendar } from 'lucide-react';
+import { ExternalLink, Calendar, PhoneCall, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { VoiceCallActivityPanel } from '@/components/crm/VoiceCallActivityPanel';
 
 export default function Calls() {
   const { data: upcomingCalls = [], isLoading: loadingUpcoming } = useCalls({ status: 'upcoming' });
@@ -18,8 +19,33 @@ export default function Calls() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   return (
-    <Tabs defaultValue="upcoming" className="space-y-4">
-      <TabsList className="bg-brand-surface border border-brand-border">
+    <div className="space-y-4">
+      <div className="bg-gradient-to-r from-rose-50 to-white border border-rose-100 rounded-[10px] p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div className="flex gap-2.5 min-w-0 items-start">
+          <div className="shrink-0 w-9 h-9 rounded-lg bg-brand-crimson/10 flex items-center justify-center">
+            <PhoneCall className="w-4 h-4 text-brand-crimson" />
+          </div>
+          <p className="text-[12px] text-brand-muted max-w-3xl leading-snug">
+            <span className="font-semibold text-brand-ink">Calls hub:</span> use <strong>Voice — Optimizer</strong> for all
+            outbound attempts, transcripts, and details. <strong>Upcoming / Completed</strong> are scheduled discovery
+            meetings. Configure keys in <strong>Settings → Integrations</strong>.
+          </p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <Button variant="outline" size="sm" className="text-[12px] border-brand-border" onClick={() => navigate('/settings')}>
+            Optimizer settings
+          </Button>
+          <Button className="shrink-0 bg-brand-crimson hover:bg-brand-crimson-dk text-[12px]" onClick={() => navigate('/leads')}>
+            Open Leads <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
+          </Button>
+        </div>
+      </div>
+
+      <Tabs defaultValue="voice" className="space-y-4">
+      <TabsList className="bg-brand-surface border border-brand-border flex-wrap h-auto">
+        <TabsTrigger value="voice" className="text-[12px] data-[state=active]:bg-white data-[state=active]:text-brand-crimson">
+          Voice — Optimizer
+        </TabsTrigger>
         <TabsTrigger value="upcoming" className="text-[12px] data-[state=active]:bg-white data-[state=active]:text-brand-crimson">
           Upcoming ({upcomingCalls.length})
         </TabsTrigger>
@@ -30,6 +56,10 @@ export default function Calls() {
           No-Shows ({noshowCalls.length})
         </TabsTrigger>
       </TabsList>
+
+      <TabsContent value="voice" className="mt-0">
+        <VoiceCallActivityPanel />
+      </TabsContent>
 
       <TabsContent value="upcoming">
         {loadingUpcoming ? <SkeletonTable rows={3} /> : upcomingCalls.length === 0 ? (
@@ -163,5 +193,6 @@ export default function Calls() {
         )}
       </TabsContent>
     </Tabs>
+    </div>
   );
 }

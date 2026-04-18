@@ -10,6 +10,11 @@ import { ActivitiesModule } from '../activities/activities.module';
 import { UsersModule } from '../users/users.module';
 import { QueueCancellationModule } from '../queues/queue-cancellation.module';
 import { CalendarModule } from '../calendar/calendar.module';
+import { VoiceModule } from '../voice/voice.module';
+import { VaaniWebhookService } from '../voice/vaani-webhook.service';
+import { GeminiScoringModule } from '../voice/gemini-scoring.module';
+import { VoicePipelineSyncModule } from '../voice/voice-pipeline-sync.module';
+import { VoiceAdHocCalendarModule } from '../voice/voice-ad-hoc-calendar.module';
 
 @Module({
   imports: [
@@ -20,12 +25,17 @@ import { CalendarModule } from '../calendar/calendar.module';
     NotificationsModule,
     ActivitiesModule,
     UsersModule,
+    VoiceModule,
+    GeminiScoringModule,
+    VoicePipelineSyncModule,
+    VoiceAdHocCalendarModule,
   ],
   controllers: [WebhooksController],
   providers: [
     CalendlyWebhookService,
     CalendlyReminderService,
     WhatsappCloudService,
+    VaaniWebhookService,
   ],
 })
 export class WebhooksModule {}

@@ -103,6 +103,39 @@ export interface JourneyEvent {
   channel?: 'facebook' | 'instagram' | 'whatsapp' | 'email' | 'voice' | 'web';
 }
 
+/** Optimizer (voice provider) attempt stored on lead */
+export interface VoiceCallEntry {
+  vaaniCallId: string;
+  vaaniDispatchId?: string;
+  triggeredAt: string;
+  triggerReason: string;
+  status: string;
+  duration: number;
+  transcript: string;
+  summary: string;
+  sentiment: string;
+  entities: Record<string, unknown>;
+  /** Raw `conversation_eval` from provider call_details. */
+  conversationEval?: Record<string, unknown>;
+  callEvalTag?: string;
+  recordingUrl: string;
+  outcome: string;
+  callbackRequestedAt?: string;
+  slotOfferedIndex?: number;
+  completedAt?: string;
+  lastEnrichedAt?: string;
+}
+
+/** One row from `GET /leads/voice-calls` (flattened voice attempt + lead). */
+export interface VoiceCallActivityItem {
+  leadId: string;
+  leadName: string;
+  leadPhone: string;
+  leadStage: string;
+  leadTrack: string;
+  call: VoiceCallEntry;
+}
+
 export interface Lead {
   id: string;
   name: string;
@@ -121,6 +154,7 @@ export interface Lead {
   lastActivity: string;
   lastActivityType: string;
   stageDuration: number;
+  voiceCalls?: VoiceCallEntry[];
   /** Mongo pipeline stage id when loaded from the API */
   pipelineStageId?: string;
   // Meta & WhatsApp enrichment
@@ -279,7 +313,8 @@ export interface AutomationSequence {
   track: Track;
   steps: AutomationStep[];
   activeLeads: number;
-  lastTriggered: string;
+  /** From automation logs; null if the sequence has never sent a step. */
+  lastTriggered: string | null;
 }
 
 export interface AutomationLog {
@@ -424,6 +459,10 @@ export interface UpcomingCallRow {
 export interface Settings {
   calendlyLink?: string;
   calendlyWebhookSigningKey?: string;
+  voiceFallbackDelayMinutes?: number;
+  maxVoiceAttempts?: number;
+  vaaniAgentId?: string;
+  vaaniOutboundNumber?: string;
   thresholds: {
     notReadyBelow: number;
     franchiseReadyMin: number;

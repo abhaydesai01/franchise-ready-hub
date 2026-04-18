@@ -69,7 +69,10 @@ function SortableLeadCard({ lead, onClick }: { lead: Lead; onClick: () => void }
 }
 
 export default function Pipeline() {
-  const { data, isLoading } = useLeads();
+  const { data, isLoading } = useLeads(undefined, {
+    refetchInterval: 25_000,
+    refetchOnWindowFocus: true,
+  });
   const { data: stageRows = [], isLoading: stagesLoading } = usePipelineStages();
   const updateStage = useUpdateLeadStage();
   const [activeTrack, setActiveTrack] = useState<string>('All');

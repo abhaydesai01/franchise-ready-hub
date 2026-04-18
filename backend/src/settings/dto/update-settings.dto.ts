@@ -134,6 +134,22 @@ export class UpdateSettingsDto {
   @IsOptional()
   calendlyWebhookSigningKey?: string;
 
+  @IsNumber()
+  @IsOptional()
+  voiceFallbackDelayMinutes?: number;
+
+  @IsNumber()
+  @IsOptional()
+  maxVoiceAttempts?: number;
+
+  @IsString()
+  @IsOptional()
+  vaaniAgentId?: string;
+
+  @IsString()
+  @IsOptional()
+  vaaniOutboundNumber?: string;
+
   @ValidateNested()
   @Type(() => BrandingContactDto)
   @IsOptional()

@@ -1,6 +1,7 @@
 import { Queue } from 'bullmq';
 import type Redis from 'ioredis';
 import { createBullConnection } from './connection';
+import { getCrmSettings } from '@/models/CrmSettings';
 
 let _redis: Redis | null = null;
 function redis(): Redis {
@@ -136,8 +137,6 @@ export async function enqueueVoiceAgentCall(data: VoiceAgentJobData): Promise<vo
   );
 }
 
-const MS_30M = 30 * 60 * 1000;
-
 /** Trigger segment for job id `voice_fallback_${leadId}_${triggerPoint}`. */
 export type VoiceFallbackTriggerPoint = 'warm_intro' | 'slot_offer';
 
@@ -170,12 +169,14 @@ export async function enqueueVoiceFallback30m(
   },
 ): Promise<void> {
   const triggerPoint = triggerPointFromBotState(data.expectedBotState);
+  const { voiceFallbackDelayMinutes } = await getCrmSettings();
+  const delayMs = Math.max(60_000, (voiceFallbackDelayMinutes ?? 30) * 60 * 1000);
   const q = voiceFallbackQueue();
   await q.add(
     'voice-fallback',
     { ...data, triggerPoint },
     {
-      delay: MS_30M,
+      delay: delayMs,
       attempts: 2,
       backoff: { type: 'exponential', delay: 10_000 },
       jobId: voiceFallbackJobId(data.leadId, triggerPoint),

@@ -16,7 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { getTrackColors, getStatusColors } from '@/lib/utils';
-import { GripVertical, Trash2, Plus, Zap, MessageSquare, Phone, Mail, UserPlus, CheckCircle2, XCircle, Clock, ArrowRight, TrendingUp, AlertTriangle, Eye } from 'lucide-react';
+import { GripVertical, Trash2, Plus, Zap, MessageSquare, Phone, Mail, UserPlus, CheckCircle2, XCircle, Clock, ArrowRight, TrendingUp, AlertTriangle, Eye, PhoneCall } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { AutomationSequence } from '@/types';
 import type { ReEngagementRule, ReEngagementLog } from '@/types/sales';
 
@@ -41,6 +42,7 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 export default function Automation() {
+  const navigate = useNavigate();
   const { data: sequences = [], isLoading: loadingSeq } = useSequences();
   const { data: logs = [], isLoading: loadingLogs } = useAutomationLogs();
   const { data: rules = [], isLoading: loadingRules } = useReEngagementRules();
@@ -77,7 +79,18 @@ export default function Automation() {
       </div>
 
       {/* Content */}
-      <div className="flex-1">
+      <div className="flex-1 space-y-3">
+        <div className="bg-brand-surface border border-brand-border rounded-lg px-4 py-2.5 text-[12px] text-brand-muted flex flex-wrap items-center gap-2">
+          <PhoneCall className="w-3.5 h-3.5 text-brand-crimson shrink-0" />
+          <span>
+            Voice automations in this list use the phone channel. Outbound <strong>Optimizer</strong> call logs,
+            transcripts, and manual dispatch are on each lead: open <strong>Leads</strong> → select a person →
+            <strong> Dispatch call</strong> or the <strong>Voice</strong> tab.
+          </span>
+          <Button variant="link" className="h-auto p-0 text-[12px] text-brand-crimson" onClick={() => navigate('/leads')}>
+            Go to Leads
+          </Button>
+        </div>
         {/* === Sequences === */}
         {activeTab === 'sequences' && (
           <div className="space-y-3">
@@ -93,7 +106,10 @@ export default function Automation() {
                         <TrackPill track={seq.track} />
                       </div>
                       <p className="text-[12px] text-brand-muted">
-                        {seq.steps.length} steps · {seq.activeLeads} active leads · Last triggered {new Date(seq.lastTriggered).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {seq.steps.length} steps · {seq.activeLeads} active leads
+                        {seq.lastTriggered
+                          ? ` · Last triggered ${new Date(seq.lastTriggered).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                          : ' · No sends logged yet'}
                       </p>
                     </div>
                     <Button variant="outline" size="sm" onClick={() => setEditingSeq(seq)}

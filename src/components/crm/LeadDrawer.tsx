@@ -27,6 +27,8 @@ import {
 import { usePipelineStages } from '@/hooks/usePipeline';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import { LeadVoiceCallsPanel } from '@/components/crm/LeadVoiceCallsPanel';
+import { DispatchVaaniCallButton } from '@/components/crm/DispatchVaaniCallButton';
 
 interface LeadDrawerProps {
   leadId: string | null;
@@ -61,6 +63,13 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     : false;
 
   if (!lead) return null;
+
+  const defaultActivityTab =
+    (lead.voiceCalls?.length ?? 0) > 0
+      ? 'voice'
+      : journeyEvents.length > 0
+        ? 'journey'
+        : 'activity';
 
   const handleAddNote = async () => {
     if (!noteText.trim()) return;
@@ -106,7 +115,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
               <X className="w-5 h-5 text-brand-muted" />
             </button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="outline"
               size="sm"
@@ -118,6 +127,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
             >
               <Phone className="w-3.5 h-3.5" /> Book Call
             </Button>
+            <DispatchVaaniCallButton leadId={lead.id} />
             <Button
               size="sm"
               className="text-[12px] bg-brand-crimson hover:bg-brand-crimson-dk text-white gap-1.5"
@@ -296,7 +306,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
 
           {/* Tabbed content: Journey / Activity / WhatsApp */}
           <div className="bg-white rounded-[10px] border border-brand-border p-6">
-            <Tabs defaultValue={journeyEvents.length > 0 ? 'journey' : 'activity'}>
+            <Tabs key={`${lead.id}-tabs`} defaultValue={defaultActivityTab}>
               <TabsList className="bg-brand-surface mb-4 flex-wrap h-auto gap-1">
                 {journeyEvents.length > 0 && (
                   <TabsTrigger value="journey" className="text-[12px]">
@@ -321,6 +331,9 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                     Documents ({lead.documents?.length ?? 0})
                   </TabsTrigger>
                 )}
+                <TabsTrigger value="voice" className="text-[12px]">
+                  Voice ({lead.voiceCalls?.length ?? 0})
+                </TabsTrigger>
               </TabsList>
 
               {journeyEvents.length > 0 && (
@@ -363,6 +376,10 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                   <LeadDocumentsTab lead={lead} />
                 </TabsContent>
               )}
+
+              <TabsContent value="voice" className="mt-0">
+                <LeadVoiceCallsPanel lead={lead} />
+              </TabsContent>
             </Tabs>
           </div>
         </div>
