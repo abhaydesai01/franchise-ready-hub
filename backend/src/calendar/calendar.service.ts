@@ -18,6 +18,7 @@ import {
   googleCreateMeetEvent,
   googleDeleteEvent,
   googleFreeBusy,
+  googleListEvents,
   googlePatchEvent,
 } from './calendar-google.api';
 import {
@@ -113,6 +114,7 @@ export class CalendarService {
     const scope = [
       'https://www.googleapis.com/auth/calendar',
       'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/userinfo.email',
     ].join(' ');
     const u = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     u.searchParams.set('client_id', clientId);
@@ -452,18 +454,25 @@ export class CalendarService {
       settingsHash ??
       `${uid}:${slotMin}:${buf}:${advDays}:${windowStart.toISOString().slice(0, 10)}`;
 
-    const redis = getSingletonBullConnection();
+    let redis: import('ioredis').default | null = null;
+    try {
+      redis = getSingletonBullConnection();
+    } catch {
+      this.log.warn('Redis unavailable – slot caching disabled');
+    }
     const ck = this.cacheKey(hash);
-    const cached = await redis.get(ck);
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached) as Array<{
-          start: string;
-          end: string;
-        }>;
-        return this.formatSlotArray(parsed.slice(0, count), tz);
-      } catch {
-        // fall through
+    if (redis) {
+      const cached = await redis.get(ck).catch(() => null);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached) as Array<{
+            start: string;
+            end: string;
+          }>;
+          return this.formatSlotArray(parsed.slice(0, count), tz);
+        } catch {
+          // fall through
+        }
       }
     }
 
@@ -540,14 +549,15 @@ export class CalendarService {
         if (overlaps(c.start, c.end, b.start, b.end)) continue outer;
       }
       free.push(c);
-      if (free.length >= count + 50) break;
     }
 
-    const serializable = free.slice(0, Math.max(count, 20)).map((s) => ({
+    const serializable = free.map((s) => ({
       start: s.start.toISOString(),
       end: s.end.toISOString(),
     }));
-    await redis.setex(ck, CACHE_TTL_SEC, JSON.stringify(serializable));
+    if (redis) {
+      await redis.setex(ck, CACHE_TTL_SEC, JSON.stringify(serializable)).catch(() => {});
+    }
 
     return this.formatSlotArray(serializable.slice(0, count), tz);
   }
@@ -797,7 +807,13 @@ export class CalendarService {
     leadId: string,
     scheduledAt: Date,
   ): Promise<string[]> {
-    const conn = getSingletonBullConnection();
+    let conn: import('ioredis').default;
+    try {
+      conn = getSingletonBullConnection();
+    } catch {
+      this.log.warn('Redis unavailable – skipping reminder jobs');
+      return [];
+    }
     const q = new Queue('calendar-reminders', { connection: conn });
     const ids: string[] = [];
     try {
@@ -963,7 +979,12 @@ export class CalendarService {
   }
 
   private async cancelReminderJobs(leadId: string): Promise<void> {
-    const conn = getSingletonBullConnection();
+    let conn: import('ioredis').default;
+    try {
+      conn = getSingletonBullConnection();
+    } catch {
+      return;
+    }
     const q = new Queue('calendar-reminders', { connection: conn });
     try {
       for (const id of [`cal_rem_24h_${leadId}`, `cal_rem_1h_${leadId}`]) {
@@ -976,7 +997,12 @@ export class CalendarService {
   }
 
   async cacheVoiceSlots(leadId: string, slots: unknown): Promise<void> {
-    const redis = getSingletonBullConnection();
+    let redis: import('ioredis').default;
+    try {
+      redis = getSingletonBullConnection();
+    } catch {
+      return;
+    }
     await redis.setex(
       `voice_slots_${leadId}`,
       VOICE_SLOT_TTL_SEC,
@@ -994,7 +1020,12 @@ export class CalendarService {
       }>
     | null
   > {
-    const redis = getSingletonBullConnection();
+    let redis: import('ioredis').default;
+    try {
+      redis = getSingletonBullConnection();
+    } catch {
+      return null;
+    }
     const raw = await redis.get(`voice_slots_${leadId}`);
     if (!raw) return null;
     try {
@@ -1026,6 +1057,104 @@ export class CalendarService {
         email: doc?.outlookEmail ?? '',
       },
     };
+  }
+
+  async getEvents(userId: string, timeMin: string, timeMax: string) {
+    const integration = await this.integrationModel
+      .findOne({ userId: new Types.ObjectId(userId), isGoogleConnected: true })
+      .lean<CalendarIntegration & { _id: string }>()
+      .exec();
+    if (!integration?.isGoogleConnected) {
+      throw new BadRequestException('Google Calendar not connected');
+    }
+    const oauth2 = await this.getGoogleOAuth2ForUser(userId);
+    return googleListEvents(oauth2, {
+      timeMin,
+      timeMax,
+      calendarId: integration.googleCalendarId || 'primary',
+    });
+  }
+
+  async createManualEvent(
+    userId: string,
+    input: {
+      title: string;
+      startTime: string;
+      endTime: string;
+      description?: string;
+      attendeeEmail?: string;
+      createMeet?: boolean;
+    },
+  ) {
+    const integration = await this.integrationModel
+      .findOne({ userId: new Types.ObjectId(userId), isGoogleConnected: true })
+      .lean<CalendarIntegration & { _id: string }>()
+      .exec();
+    if (!integration?.isGoogleConnected) {
+      throw new BadRequestException('Google Calendar not connected');
+    }
+    const oauth2 = await this.getGoogleOAuth2ForUser(userId);
+
+    const eventBody: Record<string, unknown> = {
+      summary: input.title,
+      description: input.description ?? '',
+      start: { dateTime: input.startTime, timeZone: 'Asia/Kolkata' },
+      end: { dateTime: input.endTime, timeZone: 'Asia/Kolkata' },
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: 'popup', minutes: 30 },
+        ],
+      },
+    };
+
+    if (input.attendeeEmail?.trim()) {
+      eventBody.attendees = [{ email: input.attendeeEmail.trim() }];
+    }
+
+    if (input.createMeet) {
+      eventBody.conferenceData = {
+        createRequest: {
+          requestId: `manual-${userId}-${Date.now()}`,
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      };
+    }
+
+    const created = await googleCreateMeetEvent(oauth2, eventBody);
+    return {
+      id: created.id,
+      meetLink: created.hangoutLink ?? null,
+    };
+  }
+
+  async rescheduleEvent(userId: string, eventId: string, startTime: string, endTime: string) {
+    const integration = await this.integrationModel
+      .findOne({ userId: new Types.ObjectId(userId), isGoogleConnected: true })
+      .lean<CalendarIntegration & { _id: string }>()
+      .exec();
+    if (!integration?.isGoogleConnected) {
+      throw new BadRequestException('Google Calendar not connected');
+    }
+    const oauth2 = await this.getGoogleOAuth2ForUser(userId);
+    await googlePatchEvent(oauth2, eventId, {
+      start: { dateTime: startTime, timeZone: 'Asia/Kolkata' },
+      end: { dateTime: endTime, timeZone: 'Asia/Kolkata' },
+    });
+    return { ok: true };
+  }
+
+  async deleteEvent(userId: string, eventId: string) {
+    const integration = await this.integrationModel
+      .findOne({ userId: new Types.ObjectId(userId), isGoogleConnected: true })
+      .lean<CalendarIntegration & { _id: string }>()
+      .exec();
+    if (!integration?.isGoogleConnected) {
+      throw new BadRequestException('Google Calendar not connected');
+    }
+    const oauth2 = await this.getGoogleOAuth2ForUser(userId);
+    await googleDeleteEvent(oauth2, eventId);
+    return { ok: true };
   }
 }
 

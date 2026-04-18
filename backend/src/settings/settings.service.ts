@@ -12,18 +12,18 @@ import type { UpdateAvailabilityDto } from './dto/update-availability.dto';
 
 const DEFAULT_AVAILABILITY = {
   slotDurationMinutes: 30,
-  bufferBetweenSlots: 15,
+  bufferBetweenSlots: 0,
   workingHours: {
     monday: { start: '09:00', end: '18:00', enabled: true },
     tuesday: { start: '09:00', end: '18:00', enabled: true },
     wednesday: { start: '09:00', end: '18:00', enabled: true },
     thursday: { start: '09:00', end: '18:00', enabled: true },
     friday: { start: '09:00', end: '18:00', enabled: true },
-    saturday: { start: '10:00', end: '14:00', enabled: false },
+    saturday: { start: '10:00', end: '14:00', enabled: true },
     sunday: { start: '09:00', end: '18:00', enabled: false },
   },
   timezone: 'Asia/Kolkata',
-  advanceBookingDays: 7,
+  advanceBookingDays: 30,
   slotsToOfferInBot: 3,
   meetingTitle: 'Franchise Discovery Call',
   ghlBookingLink: '',

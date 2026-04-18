@@ -52,7 +52,7 @@ export class IntegrationSetting {
   connected!: boolean;
 
   /** Optional until the user saves a key in Settings (empty string is valid). */
-  @Prop({ type: String, default: '' })
+  @Prop({ type: String, required: false, default: '' })
   apiKey!: string;
 }
 
@@ -167,7 +167,7 @@ export class AvailabilitySettings {
   @Prop({ default: 30 })
   slotDurationMinutes!: number;
 
-  @Prop({ default: 15 })
+  @Prop({ default: 0 })
   bufferBetweenSlots!: number;
 
   @Prop({ type: WorkingHoursConfigSchema, required: true, default: () => ({}) })
@@ -176,7 +176,7 @@ export class AvailabilitySettings {
   @Prop({ default: 'Asia/Kolkata' })
   timezone!: string;
 
-  @Prop({ default: 7 })
+  @Prop({ default: 30 })
   advanceBookingDays!: number;
 
   @Prop({ default: 3 })

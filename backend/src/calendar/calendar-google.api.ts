@@ -69,3 +69,48 @@ export async function googlePatchEvent(
     requestBody: body as Record<string, unknown>,
   });
 }
+
+export async function googleListEvents(
+  auth: OAuth2Client,
+  params: {
+    timeMin: string;
+    timeMax: string;
+    calendarId?: string;
+  },
+): Promise<
+  Array<{
+    id: string;
+    summary: string;
+    start: string;
+    end: string;
+    meetLink?: string;
+    allDay: boolean;
+    status: string;
+  }>
+> {
+  const calendar = google.calendar({ version: 'v3', auth });
+  const res = await calendar.events.list({
+    calendarId: params.calendarId || 'primary',
+    timeMin: params.timeMin,
+    timeMax: params.timeMax,
+    singleEvents: true,
+    orderBy: 'startTime',
+    maxResults: 250,
+  });
+  return (res.data.items ?? [])
+    .filter((e) => e.status !== 'cancelled')
+    .map((e) => ({
+      id: e.id ?? '',
+      summary: e.summary ?? '(No title)',
+      start: e.start?.dateTime ?? e.start?.date ?? '',
+      end: e.end?.dateTime ?? e.end?.date ?? '',
+      meetLink:
+        e.hangoutLink ||
+        e.conferenceData?.entryPoints?.find(
+          (ep) => ep.entryPointType === 'video',
+        )?.uri ||
+        '',
+      allDay: !e.start?.dateTime,
+      status: e.status ?? 'confirmed',
+    }));
+}

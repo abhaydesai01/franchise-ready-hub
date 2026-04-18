@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, KanbanSquare, Users, Phone, FileText, Zap,
   UserCheck, Settings, LogOut, Search, Plus, Menu, X, Bell,
-  BarChart3
+  BarChart3, CalendarDays
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,6 +24,7 @@ const navItems = [
   { icon: FileText, label: 'Proposals', path: '/proposals' },
   { icon: Zap, label: 'Automation', path: '/automation' },
   { icon: UserCheck, label: 'Clients', path: '/clients' },
+  { icon: CalendarDays, label: 'Calendar', path: '/calendar' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
@@ -37,6 +38,7 @@ const pageTitles: Record<string, string> = {
   '/proposals': 'Proposals',
   '/automation': 'Automation',
   '/clients': 'Clients',
+  '/calendar': 'Calendar',
   '/settings': 'Settings',
 };
 
@@ -46,7 +48,7 @@ const mobileTabItems = [
   navItems[1],
   navItems[2],
   navItems[3],
-  navItems[9],
+  navItems[10],
 ];
 
 interface AppLayoutProps {

@@ -12,6 +12,12 @@ import {
   fetchCalendarIntegrationStatus,
   fetchCalendarTestSlots,
   fetchCalendarUpcoming,
+  fetchCalendarAvailableSlots,
+  bookCalendarSlot,
+  fetchCalendarEvents,
+  createCalendarEvent,
+  rescheduleCalendarEvent,
+  deleteCalendarEvent,
   disconnectGoogleCalendar,
   disconnectOutlookCalendar,
 } from '@/lib/api';
@@ -128,6 +134,70 @@ export function useDisconnectOutlookCalendar() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['calendar-integration'] });
       qc.invalidateQueries({ queryKey: ['settings'] });
+    },
+  });
+}
+
+export function useCalendarAvailableSlots(enabled: boolean) {
+  return useQuery({
+    queryKey: ['calendar-available-slots'],
+    queryFn: () => fetchCalendarAvailableSlots(500),
+    enabled,
+    refetchInterval: 3 * 60 * 1000, // refresh every 3 min
+  });
+}
+
+export function useBookCalendarSlot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { leadId: string; startTime: string; endTime: string }) =>
+      bookCalendarSlot(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['calendar-available-slots'] });
+      qc.invalidateQueries({ queryKey: ['calendar-upcoming'] });
+      qc.invalidateQueries({ queryKey: ['calendar-events'] });
+    },
+  });
+}
+
+export function useCalendarEvents(timeMin: string, timeMax: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['calendar-events', timeMin, timeMax],
+    queryFn: () => fetchCalendarEvents(timeMin, timeMax),
+    enabled,
+  });
+}
+
+export function useCreateCalendarEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: createCalendarEvent,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['calendar-events'] });
+      qc.invalidateQueries({ queryKey: ['calendar-available-slots'] });
+    },
+  });
+}
+
+export function useRescheduleCalendarEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { eventId: string; startTime: string; endTime: string }) =>
+      rescheduleCalendarEvent(data.eventId, { startTime: data.startTime, endTime: data.endTime }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['calendar-events'] });
+      qc.invalidateQueries({ queryKey: ['calendar-available-slots'] });
+    },
+  });
+}
+
+export function useDeleteCalendarEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (eventId: string) => deleteCalendarEvent(eventId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['calendar-events'] });
+      qc.invalidateQueries({ queryKey: ['calendar-available-slots'] });
     },
   });
 }

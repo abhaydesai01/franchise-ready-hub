@@ -1,6 +1,11 @@
 import {
   Controller,
   Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
   Query,
   Res,
   UseGuards,
@@ -122,5 +127,87 @@ export class CalendarController {
       meetLink: l.discoveryCall?.meetLink ?? l.discoveryCall?.meetingLink ?? '',
       profileUrl: `/leads/${String(l._id)}`,
     }));
+  }
+
+  @Get('available-slots')
+  @UseGuards(JwtAuthGuard)
+  async availableSlots(@Query('count') countStr?: string) {
+    const count = Math.min(Math.max(parseInt(countStr || '500', 10) || 500, 1), 1000);
+    return this.calendar.getAvailableSlots('bot', count);
+  }
+
+  @Post('book')
+  @UseGuards(JwtAuthGuard)
+  async bookSlot(
+    @Body()
+    body: {
+      leadId: string;
+      startTime: string;
+      endTime: string;
+    },
+  ) {
+    const lead = await this.leadModel.findById(body.leadId).lean().exec();
+    if (!lead) {
+      throw new (await import('@nestjs/common')).NotFoundException('Lead not found');
+    }
+    return this.calendar.bookSlot({
+      leadId: body.leadId,
+      slotStartTime: new Date(body.startTime),
+      slotEndTime: new Date(body.endTime),
+      leadName: (lead as any).name ?? 'Lead',
+      leadEmail: (lead as any).email ?? '',
+      leadPhone: (lead as any).phone,
+      bookedVia: 'crm_bot',
+    });
+  }
+
+  @Get('events')
+  @UseGuards(JwtAuthGuard)
+  async events(
+    @CurrentUser() user: CurrentUserPayload,
+    @Query('timeMin') timeMin: string,
+    @Query('timeMax') timeMax: string,
+  ) {
+    return this.calendar.getEvents(user._id, timeMin, timeMax);
+  }
+
+  @Post('create-event')
+  @UseGuards(JwtAuthGuard)
+  async createEvent(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body()
+    body: {
+      title: string;
+      startTime: string;
+      endTime: string;
+      description?: string;
+      attendeeEmail?: string;
+      createMeet?: boolean;
+    },
+  ) {
+    return this.calendar.createManualEvent(user._id, body);
+  }
+
+  @Patch('events/:eventId')
+  @UseGuards(JwtAuthGuard)
+  async rescheduleEvent(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('eventId') eventId: string,
+    @Body()
+    body: {
+      startTime: string;
+      endTime: string;
+    },
+  ) {
+    return this.calendar.rescheduleEvent(user._id, eventId, body.startTime, body.endTime);
+  }
+
+  @Delete('events/:eventId')
+  @UseGuards(JwtAuthGuard)
+  async deleteEvent(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('eventId') eventId: string,
+  ) {
+    return this.calendar.deleteEvent(user._id, eventId);
   }
 }

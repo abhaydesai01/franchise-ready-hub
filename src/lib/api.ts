@@ -31,7 +31,7 @@ import type {
   SourceConversion,
   StageDropoff,
 } from '@/types/sales';
-import { getAccessToken } from '@/hooks/useAuth';
+import { getAccessToken, setAuth, clearAuth } from '@/hooks/useAuth';
 
 const API_BASE =
   import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? 'http://localhost:3001/api/v1';
@@ -40,20 +40,48 @@ export function getApiBase(): string {
   return API_BASE;
 }
 
+/* ── Token refresh helper ── */
+let refreshPromise: Promise<string | null> | null = null;
+
+function getRefreshToken(): string | null {
+  try {
+    const raw = window.localStorage.getItem('franchise-ready-auth');
+    if (!raw) return null;
+    return JSON.parse(raw)?.refreshToken ?? null;
+  } catch { return null; }
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+  try {
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (!res.ok) { clearAuth(); return null; }
+    const data = await res.json() as { accessToken: string; user: any };
+    // Update stored auth with new access token, keep the same refresh token
+    setAuth({ accessToken: data.accessToken, refreshToken, user: data.user });
+    return data.accessToken;
+  } catch { clearAuth(); return null; }
+}
+
 export const DEFAULT_AVAILABILITY: AvailabilitySettings = {
   slotDurationMinutes: 30,
-  bufferBetweenSlots: 15,
+  bufferBetweenSlots: 0,
   workingHours: {
     monday: { start: '09:00', end: '18:00', enabled: true },
     tuesday: { start: '09:00', end: '18:00', enabled: true },
     wednesday: { start: '09:00', end: '18:00', enabled: true },
     thursday: { start: '09:00', end: '18:00', enabled: true },
     friday: { start: '09:00', end: '18:00', enabled: true },
-    saturday: { start: '10:00', end: '14:00', enabled: false },
+    saturday: { start: '10:00', end: '14:00', enabled: true },
     sunday: { start: '09:00', end: '18:00', enabled: false },
   },
   timezone: 'Asia/Kolkata',
-  advanceBookingDays: 7,
+  advanceBookingDays: 30,
   slotsToOfferInBot: 3,
   meetingTitle: 'Franchise Discovery Call',
   ghlBookingLink: '',
@@ -61,7 +89,7 @@ export const DEFAULT_AVAILABILITY: AvailabilitySettings = {
 
 async function apiRequest<T>(
   path: string,
-  options: RequestInit & { auth?: boolean } = {},
+  options: RequestInit & { auth?: boolean; _retried?: boolean } = {},
 ): Promise<T> {
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -79,6 +107,17 @@ async function apiRequest<T>(
     ...options,
     headers,
   });
+
+  // Auto-refresh on 401 and retry once
+  if (res.status === 401 && options.auth !== false && !options._retried) {
+    if (!refreshPromise) {
+      refreshPromise = refreshAccessToken().finally(() => { refreshPromise = null; });
+    }
+    const newToken = await refreshPromise;
+    if (newToken) {
+      return apiRequest<T>(path, { ...options, _retried: true });
+    }
+  }
 
   if (!res.ok) {
     let message = 'Request failed';
@@ -864,6 +903,67 @@ export async function fetchCalendarTestSlots(): Promise<CalendarTestSlot[]> {
 
 export async function fetchCalendarUpcoming(): Promise<UpcomingCallRow[]> {
   return apiRequest<UpcomingCallRow[]>(`/calendar/upcoming`);
+}
+
+export async function fetchCalendarAvailableSlots(count = 500): Promise<CalendarTestSlot[]> {
+  return apiRequest<CalendarTestSlot[]>(`/calendar/available-slots?count=${count}`);
+}
+
+export async function bookCalendarSlot(data: {
+  leadId: string;
+  startTime: string;
+  endTime: string;
+}): Promise<{ meetLink: string; labelFull: string; googleEventId?: string }> {
+  return apiRequest(`/calendar/book`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export type CalendarEvent = {
+  id: string;
+  summary: string;
+  start: string;
+  end: string;
+  meetLink?: string;
+  allDay: boolean;
+  status: string;
+};
+
+export async function fetchCalendarEvents(timeMin: string, timeMax: string): Promise<CalendarEvent[]> {
+  return apiRequest<CalendarEvent[]>(
+    `/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`,
+  );
+}
+
+export async function createCalendarEvent(data: {
+  title: string;
+  startTime: string;
+  endTime: string;
+  description?: string;
+  attendeeEmail?: string;
+  createMeet?: boolean;
+}): Promise<{ id: string; meetLink: string | null }> {
+  return apiRequest(`/calendar/create-event`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function rescheduleCalendarEvent(
+  eventId: string,
+  data: { startTime: string; endTime: string },
+): Promise<{ ok: boolean }> {
+  return apiRequest(`/calendar/events/${encodeURIComponent(eventId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteCalendarEvent(eventId: string): Promise<{ ok: boolean }> {
+  return apiRequest(`/calendar/events/${encodeURIComponent(eventId)}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function disconnectGoogleCalendar(): Promise<{ ok?: boolean }> {

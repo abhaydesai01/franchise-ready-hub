@@ -12,6 +12,7 @@ import Calls from "@/pages/Calls";
 import Proposals from "@/pages/Proposals";
 import Automation from "@/pages/Automation";
 import Clients from "@/pages/Clients";
+import CalendarPage from "@/pages/Calendar";
 import SettingsPage from "@/pages/Settings";
 import Alerts from "@/pages/Alerts";
 import Analytics from "@/pages/Analytics";
@@ -139,6 +140,16 @@ const App = () => (
               <ProtectedRoute>
                 <AppLayout>
                   <Clients />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/calendar"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <CalendarPage />
                 </AppLayout>
               </ProtectedRoute>
             }
