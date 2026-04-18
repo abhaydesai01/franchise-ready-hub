@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 .env
+# Google OAuth client JSON downloads (never commit)
+client_secret*.json
 
 # Editor directories and files
 .vscode/*

@@ -46,8 +46,8 @@ const settingsTabs = [
   'WA Templates',
   'Email Templates',
   'Team',
-  'Integrations',
   'Calendar',
+  'Integrations',
 ] as const;
 
 const WEEKDAY_ORDER = [
@@ -70,9 +70,15 @@ const WEEKDAY_LABEL: Record<(typeof WEEKDAY_ORDER)[number], string> = {
   sunday: 'Sunday',
 };
 
+function readTabFromUrl(): string {
+  if (typeof window === 'undefined') return 'Pipeline';
+  const tab = new URLSearchParams(window.location.search).get('tab');
+  return tab && (settingsTabs as readonly string[]).includes(tab) ? tab : 'Pipeline';
+}
+
 export default function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState('Pipeline');
+  const [activeTab, setActiveTab] = useState(readTabFromUrl);
   const { data: settings, isLoading } = useSettings();
   const { data: team = [] } = useTeam();
   const inviteMember = useInviteTeamMember();
@@ -152,6 +158,18 @@ export default function SettingsPage() {
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, refetchCalStatus, setSearchParams]);
+
+  const goToSettingsTab = (tab: string) => {
+    setActiveTab(tab);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', tab);
+        return next;
+      },
+      { replace: true },
+    );
+  };
 
   if (isLoading || !settings) return <SkeletonTable />;
 
@@ -268,13 +286,22 @@ export default function SettingsPage() {
   return (
     <div className="flex gap-6">
       {/* Left tabs */}
-      <div className="w-48 flex-shrink-0 space-y-1">
-        {settingsTabs.map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)}
-            className={`w-full text-left px-4 py-2.5 rounded-lg text-[13px] font-medium transition-colors ${activeTab === tab ? 'bg-brand-crimson-lt text-brand-crimson' : 'text-brand-muted hover:bg-brand-surface'}`}>
-            {tab}
-          </button>
-        ))}
+      <div className="w-48 flex-shrink-0 flex flex-col min-h-0 max-h-[calc(100vh-7rem)]">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-brand-muted px-1 mb-2">
+          Settings
+        </p>
+        <nav className="space-y-1 overflow-y-auto pr-1 flex-1 min-h-0">
+          {settingsTabs.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => goToSettingsTab(tab)}
+              className={`w-full text-left px-4 py-2.5 rounded-lg text-[13px] font-medium transition-colors ${activeTab === tab ? 'bg-brand-crimson-lt text-brand-crimson' : 'text-brand-muted hover:bg-brand-surface'}`}
+            >
+              {tab}
+            </button>
+          ))}
+        </nav>
       </div>
 
       {/* Content */}
@@ -447,6 +474,24 @@ export default function SettingsPage() {
 
         {activeTab === 'Integrations' && (
           <div className="space-y-4">
+            <div className="rounded-[10px] border border-brand-crimson/25 bg-brand-crimson-lt/40 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <p className="text-[13px] font-semibold text-brand-ink">
+                  Google Calendar, Outlook &amp; CRM booking
+                </p>
+                <p className="text-[12px] text-brand-muted mt-1">
+                  Connect calendars, set working hours, and test slots — this is separate from API keys below.
+                </p>
+              </div>
+              <Button
+                type="button"
+                className="bg-brand-crimson hover:bg-brand-crimson-dk text-white text-[12px] shrink-0"
+                onClick={() => goToSettingsTab('Calendar')}
+              >
+                Open Calendar tab
+              </Button>
+            </div>
+
             <div className="bg-white rounded-[10px] border border-brand-border p-5 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-brand-surface flex items-center justify-center">

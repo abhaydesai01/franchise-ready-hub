@@ -51,7 +51,8 @@ export class IntegrationSetting {
   @Prop({ required: true, default: false })
   connected!: boolean;
 
-  @Prop({ required: true, default: '' })
+  /** Optional until the user saves a key in Settings (empty string is valid). */
+  @Prop({ type: String, default: '' })
   apiKey!: string;
 }
 

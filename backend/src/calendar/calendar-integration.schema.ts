@@ -48,4 +48,3 @@ export class CalendarIntegration {
 
 export const CalendarIntegrationSchema =
   SchemaFactory.createForClass(CalendarIntegration);
-CalendarIntegrationSchema.index({ userId: 1 });

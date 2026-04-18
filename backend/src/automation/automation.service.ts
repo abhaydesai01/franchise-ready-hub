@@ -23,6 +23,11 @@ import { reEngagementRulesSeed } from './seed/re-engagement-rules.seed';
 import { reEngagementLogsSeed } from './seed/re-engagement-logs.seed';
 import { UpdateAutomationSequenceDto } from './dto/update-automation-sequence.dto';
 
+/** Seed JSON uses friendly string ids; MongoDB `_id` must be ObjectId — omit so drivers assign one. */
+function omitSeedId<T extends { _id?: unknown }>(rows: T[]): Omit<T, '_id'>[] {
+  return rows.map(({ _id: _unused, ...rest }) => rest as Omit<T, '_id'>);
+}
+
 @Injectable()
 export class AutomationService {
   constructor(
@@ -39,25 +44,25 @@ export class AutomationService {
   private async ensureSequences() {
     const count = await this.sequenceModel.estimatedDocumentCount().exec();
     if (count > 0) return;
-    await this.sequenceModel.insertMany(automationSequencesSeed);
+    await this.sequenceModel.insertMany(omitSeedId(automationSequencesSeed));
   }
 
   private async ensureLogs() {
     const count = await this.logModel.estimatedDocumentCount().exec();
     if (count > 0) return;
-    await this.logModel.insertMany(automationLogsSeed);
+    await this.logModel.insertMany(omitSeedId(automationLogsSeed));
   }
 
   private async ensureRules() {
     const count = await this.ruleModel.estimatedDocumentCount().exec();
     if (count > 0) return;
-    await this.ruleModel.insertMany(reEngagementRulesSeed);
+    await this.ruleModel.insertMany(omitSeedId(reEngagementRulesSeed));
   }
 
   private async ensureReLogs() {
     const count = await this.reLogModel.estimatedDocumentCount().exec();
     if (count > 0) return;
-    await this.reLogModel.insertMany(reEngagementLogsSeed);
+    await this.reLogModel.insertMany(omitSeedId(reEngagementLogsSeed));
   }
 
   async listSequences() {

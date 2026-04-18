@@ -40,7 +40,14 @@ const pageTitles: Record<string, string> = {
   '/settings': 'Settings',
 };
 
-const mobileTabItems = navItems.slice(0, 5);
+/** Bottom bar on small screens: include Settings (many users never open the hamburger menu). */
+const mobileTabItems = [
+  navItems[0],
+  navItems[1],
+  navItems[2],
+  navItems[3],
+  navItems[9],
+];
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -85,7 +92,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           <span className="md:hidden text-[14px] font-bold text-brand-crimson">Ready</span>
         </div>
 
-        <nav className="flex-1 px-2 space-y-0.5 md:px-1 xl:px-2">
+        <nav className="flex-1 min-h-0 overflow-y-auto px-2 space-y-0.5 md:px-1 xl:px-2">
           {navItems.map(item => {
             const isActive = currentPath === item.path;
             const isAlerts = item.path === '/alerts';

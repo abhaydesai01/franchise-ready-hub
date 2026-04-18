@@ -144,6 +144,14 @@ const App = () => (
             }
           />
           <Route
+            path="/settings/calendar"
+            element={
+              <ProtectedRoute>
+                <Navigate to="/settings?tab=calendar" replace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/settings"
             element={
               <ProtectedRoute>
