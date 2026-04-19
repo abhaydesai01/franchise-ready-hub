@@ -23,11 +23,13 @@ module.exports = {
     },
 
     // ── NestJS BullMQ Workers ─────────────────────────────────────────
+    // Workers are standalone Node scripts — they don't use NestJS ConfigModule.
+    // -r dotenv/config loads backend/.env automatically (cwd is backend/).
     {
       name: 'worker-calendly',
       cwd: `${APP_DIR}/backend`,
       script: 'node',
-      args: 'dist/calendly/calendly-reminders.worker.js',
+      args: '-r dotenv/config dist/calendly/calendly-reminders.worker.js',
       instances: 1,
       autorestart: true,
       watch: false,
@@ -37,7 +39,7 @@ module.exports = {
       name: 'worker-calendar',
       cwd: `${APP_DIR}/backend`,
       script: 'node',
-      args: 'dist/calendar/calendar-reminders.worker.js',
+      args: '-r dotenv/config dist/calendar/calendar-reminders.worker.js',
       instances: 1,
       autorestart: true,
       watch: false,
@@ -47,7 +49,7 @@ module.exports = {
       name: 'worker-voice',
       cwd: `${APP_DIR}/backend`,
       script: 'node',
-      args: 'dist/voice/voice-fallback.worker.js',
+      args: '-r dotenv/config dist/voice/voice-fallback.worker.js',
       instances: 1,
       autorestart: true,
       watch: false,
@@ -57,7 +59,7 @@ module.exports = {
       name: 'worker-documents',
       cwd: `${APP_DIR}/backend`,
       script: 'node',
-      args: 'dist/documents/document-generation.worker.js',
+      args: '-r dotenv/config dist/documents/document-generation.worker.js',
       instances: 1,
       autorestart: true,
       watch: false,
@@ -67,7 +69,7 @@ module.exports = {
       name: 'worker-proposal',
       cwd: `${APP_DIR}/backend`,
       script: 'node',
-      args: 'dist/documents/proposal-followup.worker.js',
+      args: '-r dotenv/config dist/documents/proposal-followup.worker.js',
       instances: 1,
       autorestart: true,
       watch: false,
