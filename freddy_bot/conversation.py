@@ -519,7 +519,7 @@ def _book_slot(phone: str, session: dict, slot: dict):
         # Call backend API to create Google Calendar event + update lead
         try:
             resp = http_requests.post(
-                f"{BACKEND_URL}/calendar/bot-book",
+                f"{BACKEND_URL}/api/v1/calendar/bot-book",
                 json={
                     "leadId": str(lead_id),
                     "startTime": start.isoformat(),
