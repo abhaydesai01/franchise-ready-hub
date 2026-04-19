@@ -805,6 +805,96 @@ export class CalendarService {
     return { meetLink, labelFull, googleEventId, outlookEventId };
   }
 
+  /**
+   * Book a slot from the WhatsApp bot (Freddy).
+   * Does NOT require lead email — creates Google Calendar event without attendee.
+   */
+  async bookSlotFromBot(input: {
+    leadId: string;
+    slotStartTime: Date;
+    slotEndTime: Date;
+    leadName: string;
+    leadPhone?: string;
+  }): Promise<{
+    meetLink: string;
+    labelFull: string;
+    googleEventId?: string;
+  }> {
+    const lead = await this.leadModel.findById(input.leadId).exec();
+    if (!lead) throw new NotFoundException('Lead not found');
+
+    const integration = await this.getPrimaryIntegration();
+    const uid = String(integration.userId);
+    const oauth2 = await this.getGoogleOAuth2ForUser(uid);
+
+    const settings = await this.settings.getSettings();
+    const av = settings?.availabilitySettings;
+    const meetTitle = av?.meetingTitle ?? 'Franchise Discovery Call';
+
+    const eventBody = {
+      summary: `${meetTitle} — ${input.leadName}`,
+      description: `Discovery call booked via WhatsApp Bot.\n\nLead: ${input.leadName}\nPhone: ${input.leadPhone ?? '—'}`,
+      start: {
+        dateTime: input.slotStartTime.toISOString(),
+        timeZone: 'Asia/Kolkata',
+      },
+      end: {
+        dateTime: input.slotEndTime.toISOString(),
+        timeZone: 'Asia/Kolkata',
+      },
+      attendees: [],
+      conferenceData: {
+        createRequest: {
+          requestId: `${input.leadId}-${Date.now()}`,
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      },
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: 'email' as const, minutes: 1440 },
+          { method: 'popup' as const, minutes: 60 },
+        ],
+      },
+    };
+
+    const created = await googleCreateMeetEvent(oauth2, eventBody);
+    const meetLink = created.hangoutLink ?? '';
+    const googleEventId = created.id ?? '';
+
+    const { labelFull } = formatSlotLabels(
+      input.slotStartTime,
+      av?.timezone ?? 'Asia/Kolkata',
+    );
+
+    const jobIds = await this.scheduleReminderJobs(
+      input.leadId,
+      input.slotStartTime,
+    );
+
+    lead.discoveryCall = {
+      ...(lead.discoveryCall ?? {}),
+      scheduledAt: input.slotStartTime,
+      endTime: input.slotEndTime,
+      meetingLink: meetLink,
+      meetLink,
+      status: 'scheduled',
+      bookedVia: 'crm_bot',
+      googleEventId,
+      reminderJobIds: jobIds,
+    };
+    lead.stage = 'call_booked';
+    await lead.save();
+
+    await this.activities.createForLead(input.leadId, {
+      type: 'call_booked',
+      description: `Discovery call booked via WhatsApp for ${labelFull}`,
+      addedBy: 'Freddy Bot',
+    });
+
+    return { meetLink, labelFull, googleEventId };
+  }
+
   private buildIcsBuffer(params: {
     title: string;
     start: Date;

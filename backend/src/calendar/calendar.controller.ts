@@ -8,10 +8,13 @@ import {
   Param,
   Query,
   Res,
+  Headers,
   UseGuards,
   HttpCode,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type CurrentUserPayload } from '../auth/current-user.decorator';
 import { CalendarService } from './calendar.service';
@@ -23,6 +26,7 @@ import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
 export class CalendarController {
   constructor(
     private readonly calendar: CalendarService,
+    private readonly config: ConfigService,
     @InjectModel(Lead.name) private readonly leadModel: Model<LeadDocument>,
   ) {}
 
@@ -158,6 +162,38 @@ export class CalendarController {
       leadEmail: (lead as any).email ?? '',
       leadPhone: (lead as any).phone,
       bookedVia: 'crm_bot',
+    });
+  }
+
+  /**
+   * Internal endpoint for Freddy WhatsApp bot — no JWT required.
+   * Authenticated via x-internal-secret header.
+   */
+  @Post('bot-book')
+  @HttpCode(200)
+  async botBookSlot(
+    @Headers('x-internal-secret') secret: string,
+    @Body()
+    body: {
+      leadId: string;
+      startTime: string;
+      endTime: string;
+    },
+  ) {
+    const expected = this.config.get<string>('internalWebhookSecret');
+    if (!expected || secret !== expected) {
+      throw new ForbiddenException('Invalid internal secret');
+    }
+    const lead = await this.leadModel.findById(body.leadId).lean().exec();
+    if (!lead) {
+      throw new (await import('@nestjs/common')).NotFoundException('Lead not found');
+    }
+    return this.calendar.bookSlotFromBot({
+      leadId: body.leadId,
+      slotStartTime: new Date(body.startTime),
+      slotEndTime: new Date(body.endTime),
+      leadName: (lead as any).name ?? 'Lead',
+      leadPhone: (lead as any).phone,
     });
   }
 
