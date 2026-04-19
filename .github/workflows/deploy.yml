@@ -1,0 +1,41 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /home/ubuntu/franchise-ready-hub
+
+            echo "--- Pulling latest code ---"
+            git pull origin main
+
+            echo "--- Installing dependencies ---"
+            npm install --legacy-peer-deps
+            npm install --prefix backend
+            npm install --prefix crm
+
+            echo "--- Building ---"
+            VITE_API_URL="http://${{ secrets.EC2_HOST }}/api/v1" npm run build
+            NODE_OPTIONS="--max-old-space-size=3072" npm run build --prefix backend
+            npm run build --prefix crm
+
+            echo "--- Restarting processes ---"
+            pm2 restart all --update-env
+            pm2 save
+
+            echo "--- Done ---"
+            pm2 status

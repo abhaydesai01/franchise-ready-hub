@@ -38,10 +38,25 @@ cd "$APP_DIR"
 
 echo ""
 echo "============================================="
+echo "  STEP 3.5 — Add swap (prevents OOM during build)"
+echo "============================================="
+if [ ! -f /swapfile ]; then
+  sudo fallocate -l 2G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
+  echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+  echo "Swap enabled."
+else
+  echo "Swap already exists, skipping."
+fi
+
+echo ""
+echo "============================================="
 echo "  STEP 4 — Install dependencies"
 echo "============================================="
 # Root (Vite SPA)
-npm install
+npm install --legacy-peer-deps
 
 # NestJS backend
 npm install --prefix backend
@@ -62,7 +77,7 @@ echo "============================================="
 VITE_API_URL="http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)/api/v1" npm run build
 
 # NestJS — produces backend/dist/
-npm run build --prefix backend
+NODE_OPTIONS="--max-old-space-size=3072" npm run build --prefix backend
 
 # Next.js CRM — produces crm/.next/
 npm run build --prefix crm
