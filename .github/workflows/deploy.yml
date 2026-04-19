@@ -28,6 +28,10 @@ jobs:
             npm install --prefix backend
             npm install --prefix crm
 
+            echo "--- Cleaning build caches ---"
+            npm cache clean --force
+            rm -rf crm/.next/cache
+
             echo "--- Building ---"
             VITE_API_URL="http://${{ secrets.EC2_HOST }}/api/v1" npm run build
             NODE_OPTIONS="--max-old-space-size=3072" npm run build --prefix backend
