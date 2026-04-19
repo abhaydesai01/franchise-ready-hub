@@ -6,7 +6,7 @@
 # =============================================================================
 set -e
 
-REPO_URL="https://github.com/YOUR_ORG/YOUR_REPO.git"   # <-- change this
+REPO_URL="https://github.com/abhaydesai01/franchise-ready-hub.git"   # <-- change this
 APP_DIR="/home/ubuntu/franchise-ready-hub"
 
 echo ""
