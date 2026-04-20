@@ -34,6 +34,26 @@ type FallbackJobData = {
   attempt?: number;
 };
 
+type WaInactivityJobData = {
+  leadId: string;
+  phone: string;
+  state: string;
+  knownName: string;
+  collectedFields: string;
+  missingFields: string;
+};
+
+type WaInactivityJobData = {
+  leadId: string;
+  phone: string;
+  state: string;
+  knownName: string;
+  collectedFields: string;
+  missingFields: string;
+  /** ISO timestamp of last session update — worker aborts if session was updated after this */
+  sessionUpdatedAt: string;
+};
+
 function toVapiTrigger(tp: 'warm_intro' | 'slot_offer'): VoiceTriggerPoint {
   return tp === 'warm_intro' ? 'intro_no_response' : 'slot_no_response';
 }
@@ -116,6 +136,91 @@ async function run() {
           await voicePipelineSync.afterVoiceDataSaved(data.leadId, data.callId);
           await voiceAdHoc.tryBookFromVoice(data.leadId, data.callId);
         }
+        return;
+      }
+
+      // ── WhatsApp inactivity follow-up call ────────────────────────────
+      if (jobName === 'wa-inactivity-call') {
+        const d = data as WaInactivityJobData;
+        if (!d.leadId || !d.phone) return;
+        if (d.state === 'DONE' || d.state === 'WELCOME') return;
+
+        const lead = await leadModel.findById(d.leadId).exec();
+        if (!lead?.phone) return;
+
+        // Guard: skip if a wa_inactivity call was already made in the last 30 min
+        const THIRTY_MIN = 30 * 60 * 1000;
+        const recentCall = lead.voiceCalls?.find(
+          (vc) =>
+            (vc as Record<string, unknown>)['triggerReason'] === 'wa_inactivity' &&
+            new Date(String((vc as Record<string, unknown>)['triggeredAt'])).getTime() >
+              Date.now() - THIRTY_MIN,
+        );
+        if (recentCall) {
+          console.log(`[wa-inactivity] Already called ${d.leadId} recently, skipping`);
+          return;
+        }
+
+        // Guard: check the freddy session is still mid-flow
+        const db = leadModel.db;
+        const { Types } = await import('mongoose');
+        let leadOid: InstanceType<typeof Types.ObjectId> | null = null;
+        try {
+          leadOid = new Types.ObjectId(d.leadId);
+        } catch {
+          return;
+        }
+        const session = await db
+          .collection('freddy_sessions')
+          .findOne({ lead_id: leadOid });
+        const currentState = String(session?.state ?? d.state);
+        if (currentState === 'DONE') {
+          console.log(`[wa-inactivity] Session DONE for ${d.leadId}, skipping`);
+          return;
+        }
+
+        const vaaniCfg = await vaani.getConfig();
+        if (!vaaniCfg) {
+          console.warn('[wa-inactivity] Vaani not configured, skipping call');
+          return;
+        }
+
+        const appSettings = await settingsService.getSettings();
+        const companyName =
+          appSettings?.branding?.companyName?.trim() ||
+          process.env.COMPANY_NAME ||
+          'Franchise Ready';
+
+        const { callId, dispatchId } = await vaani.triggerCall({
+          leadId: d.leadId,
+          contactNumber: lead.phone.replace(/\s/g, ''),
+          leadName: d.knownName || lead.name,
+          triggerReason: 'wa_inactivity',
+          readinessScore: lead.totalScore ?? lead.score ?? 0,
+          readinessBand: readinessBandLabel(lead),
+          availableSlots: '',
+          companyName,
+          collectedFields: d.collectedFields,
+          missingFields: d.missingFields,
+        });
+
+        const vc: Record<string, unknown> = {
+          vaaniCallId: callId,
+          triggeredAt: new Date(),
+          triggerReason: 'wa_inactivity',
+          status: 'initiated',
+        };
+        if (dispatchId) vc['vaaniDispatchId'] = dispatchId;
+        await leadModel.findByIdAndUpdate(d.leadId, { $push: { voiceCalls: vc } });
+
+        await activities.logVoiceCall(
+          d.leadId,
+          d.knownName || lead.name,
+          `Vaani outbound call triggered — WhatsApp inactivity follow-up (missing: ${d.missingFields || 'details'})`,
+        );
+
+        void schedulePostDispatchEnrichment(d.leadId, callId);
+        console.log(`[wa-inactivity] Vaani call dispatched for ${d.leadId} (${callId})`);
         return;
       }
 

@@ -9,7 +9,10 @@ import {
 
 const VAANI_INTEGRATION_ID = 'i6';
 
-export type VaaniTriggerReason = 'intro_no_response' | 'slot_no_response';
+export type VaaniTriggerReason =
+  | 'intro_no_response'
+  | 'slot_no_response'
+  | 'wa_inactivity';
 
 /** Result of POST /api/trigger-call/ — `callId` is the room name used by transcript, call_details, stream. */
 export type VaaniTriggerResult = {
@@ -180,6 +183,9 @@ export class VaaniService {
     readinessBand: string;
     availableSlots: string;
     companyName: string;
+    /** Extra context for wa_inactivity calls — what Freddy already collected vs still needs */
+    collectedFields?: string;
+    missingFields?: string;
   }): Promise<VaaniTriggerResult> {
     const cfg = await this.getConfig();
     if (!cfg) {
@@ -199,6 +205,8 @@ export class VaaniService {
         readiness_score: String(params.readinessScore),
         readiness_band: params.readinessBand,
         available_slots: params.availableSlots,
+        ...(params.collectedFields != null && { collected_fields: params.collectedFields }),
+        ...(params.missingFields != null && { missing_fields: params.missingFields }),
       },
     };
     if (cfg.outboundNumber?.trim()) {

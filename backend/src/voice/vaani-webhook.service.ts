@@ -15,6 +15,7 @@ import { extractSlotIndex, inferVoiceOutcome, type VoiceInferredOutcome } from '
 import { GeminiVoiceScoringService } from './gemini-voice-scoring.service';
 import { VoicePipelineSyncService } from './voice-pipeline-sync.service';
 import { VoiceAdHocCalendarService } from './voice-ad-hoc-calendar.service';
+import { WhatsappCloudService } from '../whatsapp/whatsapp-cloud.service';
 
 const MS_24H = 24 * 60 * 60 * 1000;
 
@@ -56,6 +57,7 @@ export class VaaniWebhookService {
     private readonly geminiVoiceScoring: GeminiVoiceScoringService,
     private readonly voicePipelineSync: VoicePipelineSyncService,
     private readonly voiceAdHocCalendar: VoiceAdHocCalendarService,
+    private readonly whatsapp: WhatsappCloudService,
   ) {}
 
   async handle(
@@ -315,11 +317,135 @@ export class VaaniWebhookService {
     await this.voicePipelineSync.afterVoiceDataSaved(leadId, roomName);
     await this.voiceAdHocCalendar.tryBookFromVoice(leadId, roomName);
 
+    // ── wa_inactivity follow-up: hydrate freddy_session with whatever the call collected ──
+    const voiceCall = lead.voiceCalls?.find(
+      (vc) => (vc as Record<string, unknown>)['vaaniCallId'] === roomName,
+    );
+    if ((voiceCall as Record<string, unknown> | undefined)?.['triggerReason'] === 'wa_inactivity') {
+      await this.applyWaInactivityCallResult(lead, entities, summary);
+    }
+
     await this.notifications.notifyAdminsAndManagers({
       type: 'voice_call_completed',
       description: `Vaani — ${lead.name}: ${outcome}. ${dur}s. ${summary.slice(0, 280)}`,
       leadId,
     });
+  }
+
+  /**
+   * After a wa_inactivity call completes, extract any qualification data Vaani
+   * collected and write it back into the freddy_session + lead, then send a
+   * WhatsApp nudge to continue the booking flow.
+   */
+  private async applyWaInactivityCallResult(
+    lead: Lead & { _id: { toString: () => string } },
+    entities: Record<string, unknown>,
+    summary: string,
+  ) {
+    const leadId = String(lead._id);
+    const { Types } = await import('mongoose');
+    let leadOid: InstanceType<typeof Types.ObjectId> | null = null;
+    try {
+      leadOid = new Types.ObjectId(leadId);
+    } catch {
+      return;
+    }
+
+    const db = this.leadModel.db;
+    const session = await db
+      .collection('freddy_sessions')
+      .findOne({ lead_id: leadOid });
+
+    if (!session) {
+      this.log.warn(`[wa-inactivity] No freddy_session for lead ${leadId}`);
+      return;
+    }
+
+    // Map Vaani entity keys → freddy_session fields
+    const fieldMap: Record<string, string[]> = {
+      contact_name: ['name', 'contact_name', 'lead_name'],
+      email: ['email'],
+      brand_name: ['brand', 'brand_name', 'company_name', 'business_name'],
+      outlet_count: ['outlets', 'outlet_count', 'outlet_number', 'number_of_outlets'],
+      city: ['city', 'location', 'operating_city'],
+      service_type: ['service', 'service_type', 'consulting_type'],
+      sops_ready: ['sops', 'sops_ready', 'documentation', 'sop_status'],
+      growth_goal: ['goal', 'growth_goal', 'expansion_goal'],
+    };
+
+    const sessionUpdates: Record<string, unknown> = { updated_at: new Date() };
+    const leadUpdates: Record<string, unknown> = { updatedAt: new Date() };
+    const collectedNow: string[] = [];
+
+    for (const [sessionField, entityKeys] of Object.entries(fieldMap)) {
+      // Skip if already in session
+      if (session[sessionField]) continue;
+      for (const key of entityKeys) {
+        const val = entities[key];
+        if (val && String(val).trim().length > 0) {
+          sessionUpdates[sessionField] = String(val).trim();
+          if (sessionField === 'contact_name') leadUpdates['name'] = String(val).trim();
+          if (sessionField === 'email') leadUpdates['email'] = String(val).trim();
+          if (sessionField === 'brand_name') leadUpdates['company'] = String(val).trim();
+          collectedNow.push(sessionField);
+          break;
+        }
+      }
+    }
+
+    // Advance session state to the furthest consistently-filled state
+    const STATE_ORDER = [
+      'WELCOME', 'Q_NAME', 'Q_EMAIL', 'Q_BRAND', 'Q_OUTLETS',
+      'Q_CITY', 'Q_SERVICE', 'Q_SOPS', 'Q_GOAL', 'DATE_SELECT',
+    ];
+    const FIELD_FOR_STATE: Record<string, string> = {
+      Q_NAME: 'contact_name',
+      Q_EMAIL: 'email',
+      Q_BRAND: 'brand_name',
+      Q_OUTLETS: 'outlet_count',
+      Q_CITY: 'city',
+      Q_SERVICE: 'service_type',
+      Q_SOPS: 'sops_ready',
+      Q_GOAL: 'growth_goal',
+    };
+
+    const mergedSession = { ...session, ...sessionUpdates };
+    let targetState = String(session.state ?? 'Q_NAME');
+    for (const st of STATE_ORDER) {
+      const requiredField = FIELD_FOR_STATE[st];
+      if (requiredField && !mergedSession[requiredField]) break;
+      targetState = STATE_ORDER[Math.min(STATE_ORDER.indexOf(st) + 1, STATE_ORDER.length - 1)];
+    }
+    if (targetState !== String(session.state ?? '')) {
+      sessionUpdates['state'] = targetState;
+    }
+
+    if (Object.keys(sessionUpdates).length > 1) {
+      await db
+        .collection('freddy_sessions')
+        .updateOne({ lead_id: leadOid }, { $set: sessionUpdates });
+    }
+    if (Object.keys(leadUpdates).length > 1) {
+      await this.leadModel.findByIdAndUpdate(leadId, { $set: leadUpdates });
+    }
+
+    if (collectedNow.length > 0) {
+      this.log.log(
+        `[wa-inactivity] Session hydrated for ${leadId}: ${collectedNow.join(', ')} → state: ${targetState}`,
+      );
+    }
+
+    // Send WhatsApp nudge to resume the conversation
+    const phone = lead.phone?.trim();
+    if (phone) {
+      const firstName = (lead.name ?? '').trim().split(/\s+/)[0] || 'there';
+      const waMsg =
+        `Hi ${firstName}! 👋 We just spoke briefly.\n\n` +
+        `To continue booking your discovery call with Rahul, just reply *hi* here and I'll get you the available slots right away. 📅`;
+      await this.whatsapp.sendText(phone, waMsg).catch((e) => {
+        this.log.warn('[wa-inactivity] WhatsApp nudge send failed', e);
+      });
+    }
   }
 
   private extractCallbackTime(

@@ -180,6 +180,41 @@ def _advance_state(current: str) -> str:
     return STATES[idx + 1] if idx + 1 < len(STATES) else "DONE"
 
 
+def _schedule_inactivity_call(phone: str, lead_id, state: str, session: dict):
+    """
+    POSTs to NestJS to (re)schedule a 10-min Vaani follow-up call.
+    Non-blocking — errors are logged but never raise.
+    """
+    if not lead_id or state in ("DONE", "WELCOME", "DATE_SELECT", "SLOT_SELECT"):
+        return
+    try:
+        url = f"{BACKEND_URL}/api/v1/whatsapp/schedule-inactivity-call"
+        headers = {
+            "Content-Type": "application/json",
+            "x-internal-secret": INTERNAL_WEBHOOK_SECRET or "",
+        }
+        payload = {
+            "phone": phone,
+            "leadId": str(lead_id),
+            "state": state,
+            "session": {
+                "contact_name": session.get("contact_name"),
+                "email": session.get("email"),
+                "brand_name": session.get("brand_name"),
+                "outlet_count": session.get("outlet_count"),
+                "city": session.get("city"),
+                "service_type": session.get("service_type"),
+                "sops_ready": session.get("sops_ready"),
+                "growth_goal": session.get("growth_goal"),
+            },
+        }
+        resp = http_requests.post(url, json=payload, headers=headers, timeout=5)
+        if not resp.ok:
+            logger.warning("[wa-inactivity] schedule call failed %s %s", resp.status_code, resp.text[:200])
+    except Exception as exc:
+        logger.warning("[wa-inactivity] schedule call error: %s", exc)
+
+
 def _is_valid_email(text: str) -> bool:
     """Very lightweight email check — just needs @ and a dot after it."""
     text = text.strip().lower()
@@ -659,6 +694,7 @@ def handle_message(phone: str, message: dict):
             {"phone": phone},
             {"$set": {"state": "Q_NAME", "updated_at": datetime.now(timezone.utc)}},
         )
+        _schedule_inactivity_call(phone, lead_id, "Q_NAME", session)
         return
 
     # ── DONE: already finished
@@ -735,6 +771,7 @@ def handle_message(phone: str, message: dict):
             {"$set": {"state": next_state, "updated_at": datetime.now(timezone.utc)}},
         )
         _send_question(phone, next_state, session)
+        _schedule_inactivity_call(phone, lead_id, next_state, session)
         logger.info("Phone %s: Q_EMAIL → %s (email: %s)", phone, next_state, email_value or "skipped")
         return
 
@@ -760,5 +797,8 @@ def handle_message(phone: str, message: dict):
 
     # Send next question (or date selection or slot selection)
     _send_question(phone, next_state, session)
+
+    # Reset the 10-min inactivity call timer
+    _schedule_inactivity_call(phone, lead_id, next_state, session)
 
     logger.info("Phone %s: %s → %s (answered: %s)", phone, state, next_state, reply[:50])

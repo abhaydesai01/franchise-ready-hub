@@ -1,6 +1,32 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
+import { Queue } from 'bullmq';
+import { getSingletonBullConnection } from '../queues/redis-connection';
+
+const WA_INACTIVITY_DELAY_MS = 10 * 60 * 1000; // 10 minutes
+
+const FREDDY_STATE_FIELDS: Record<string, string> = {
+  Q_NAME: 'Name',
+  Q_EMAIL: 'Email',
+  Q_BRAND: 'Brand / Business',
+  Q_OUTLETS: 'No. of Outlets',
+  Q_CITY: 'City',
+  Q_SERVICE: 'Service Type',
+  Q_SOPS: 'SOPs Ready',
+  Q_GOAL: 'Growth Goal',
+};
+
+const FREDDY_SESSION_KEYS: Record<string, string> = {
+  Q_NAME: 'contact_name',
+  Q_EMAIL: 'email',
+  Q_BRAND: 'brand_name',
+  Q_OUTLETS: 'outlet_count',
+  Q_CITY: 'city',
+  Q_SERVICE: 'service_type',
+  Q_SOPS: 'sops_ready',
+  Q_GOAL: 'growth_goal',
+};
 
 export interface InboxConversation {
   sessionId: string;
@@ -28,6 +54,8 @@ export interface FreddyMessage {
 
 @Injectable()
 export class WhatsappInboxService {
+  private readonly log = new Logger(WhatsappInboxService.name);
+
   constructor(@InjectConnection() private readonly conn: Connection) {}
 
   private sessions() {
@@ -127,6 +155,75 @@ export class WhatsappInboxService {
       .toArray();
 
     return byPhone.map((d) => this._mapMsg(d));
+  }
+
+  /**
+   * Called by Freddy bot after each message.
+   * Removes any existing inactivity job for this lead, then schedules a new one
+   * with a fresh 10-minute delay. Uses a stable jobId so re-scheduling replaces.
+   */
+  async scheduleInactivityCall(params: {
+    phone: string;
+    leadId: string;
+    state: string;
+    session: Record<string, unknown>;
+  }): Promise<void> {
+    const { phone, leadId, state, session } = params;
+
+    // States that should NOT trigger a call
+    if (!leadId || state === 'DONE' || state === 'WELCOME' || state === 'SLOT_SELECT') {
+      return;
+    }
+
+    // Build collected / missing field summaries
+    const allStates = Object.keys(FREDDY_STATE_FIELDS);
+    const collected: string[] = [];
+    const missing: string[] = [];
+    for (const st of allStates) {
+      const key = FREDDY_SESSION_KEYS[st];
+      if (session[key]) {
+        collected.push(FREDDY_STATE_FIELDS[st]);
+      } else {
+        missing.push(FREDDY_STATE_FIELDS[st]);
+      }
+    }
+
+    const knownName = String(session['contact_name'] ?? '');
+    const jobId = `wa_inactivity_${leadId}`;
+    const jobData = {
+      leadId,
+      phone,
+      state,
+      knownName,
+      collectedFields: collected.join(', ') || 'none yet',
+      missingFields: missing.join(', ') || 'all collected',
+    };
+
+    let q: Queue | null = null;
+    try {
+      const conn = getSingletonBullConnection();
+      q = new Queue('voice-fallback', { connection: conn });
+
+      // Remove existing job first so the timer resets correctly
+      const existing = await q.getJob(jobId);
+      if (existing) {
+        await existing.remove().catch(() => null);
+      }
+
+      await q.add('wa-inactivity-call', jobData, {
+        delay: WA_INACTIVITY_DELAY_MS,
+        jobId,
+        attempts: 1,
+        removeOnComplete: true,
+        removeOnFail: true,
+      });
+
+      this.log.debug(`[wa-inactivity] Job scheduled for lead ${leadId} (state: ${state})`);
+    } catch (e) {
+      this.log.error('[wa-inactivity] Failed to schedule inactivity call', e);
+    } finally {
+      if (q) await q.close();
+    }
   }
 
   private _mapMsg(d: Record<string, unknown>): FreddyMessage {
