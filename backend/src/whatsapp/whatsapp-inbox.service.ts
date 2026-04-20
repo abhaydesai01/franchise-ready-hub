@@ -59,13 +59,13 @@ export class WhatsappInboxService {
   constructor(@InjectConnection() private readonly conn: Connection) {}
 
   private sessions() {
-    return this.conn.db.collection('freddy_sessions');
+    return this.conn.db!.collection('freddy_sessions');
   }
   private messages() {
-    return this.conn.db.collection('freddy_messages');
+    return this.conn.db!.collection('freddy_messages');
   }
   private leads() {
-    return this.conn.db.collection('leads');
+    return this.conn.db!.collection('leads');
   }
 
   async getInbox(): Promise<InboxConversation[]> {
@@ -119,7 +119,7 @@ export class WhatsappInboxService {
         sessionId: String(s._id),
         phone,
         leadId: sessionLeadId ?? leadInfo?.id ?? null,
-        leadName: leadInfo?.name ?? String(s.contact_name ?? '') || 'Unknown',
+        leadName: leadInfo?.name ?? (String(s.contact_name ?? '') || 'Unknown'),
         state: String(s.state ?? 'WELCOME'),
         lastMessage: msg ? String(msg.body ?? '').slice(0, 120) : '',
         lastMessageAt: msg?.created_at

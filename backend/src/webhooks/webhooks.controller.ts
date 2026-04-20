@@ -205,7 +205,7 @@ export class WebhooksController {
         leadName: lead.name,
         leadEmail: email,
         leadPhone: lead.phone,
-        bookedVia: 'vaani_voice',
+        bookedVia: 'crm_voice',
       });
     } else {
       // Book without attendee (no email on file yet)

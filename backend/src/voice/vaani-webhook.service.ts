@@ -319,9 +319,9 @@ export class VaaniWebhookService {
 
     // ── wa_inactivity follow-up: hydrate freddy_session with whatever the call collected ──
     const voiceCall = lead.voiceCalls?.find(
-      (vc) => (vc as Record<string, unknown>)['vaaniCallId'] === roomName,
+      (vc) => (vc as unknown as Record<string, unknown>)['vaaniCallId'] === roomName,
     );
-    if ((voiceCall as Record<string, unknown> | undefined)?.['triggerReason'] === 'wa_inactivity') {
+    if ((voiceCall as unknown as Record<string, unknown> | undefined)?.['triggerReason'] === 'wa_inactivity') {
       await this.applyWaInactivityCallResult(lead, entities, summary);
     }
 

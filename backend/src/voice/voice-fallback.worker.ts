@@ -43,17 +43,6 @@ type WaInactivityJobData = {
   missingFields: string;
 };
 
-type WaInactivityJobData = {
-  leadId: string;
-  phone: string;
-  state: string;
-  knownName: string;
-  collectedFields: string;
-  missingFields: string;
-  /** ISO timestamp of last session update — worker aborts if session was updated after this */
-  sessionUpdatedAt: string;
-};
-
 function toVapiTrigger(tp: 'warm_intro' | 'slot_offer'): VoiceTriggerPoint {
   return tp === 'warm_intro' ? 'intro_no_response' : 'slot_no_response';
 }
@@ -141,7 +130,7 @@ async function run() {
 
       // ── WhatsApp inactivity follow-up call ────────────────────────────
       if (jobName === 'wa-inactivity-call') {
-        const d = data as WaInactivityJobData;
+        const d = data as unknown as WaInactivityJobData;
         if (!d.leadId || !d.phone) return;
         if (d.state === 'DONE' || d.state === 'WELCOME') return;
 
@@ -152,8 +141,8 @@ async function run() {
         const THIRTY_MIN = 30 * 60 * 1000;
         const recentCall = lead.voiceCalls?.find(
           (vc) =>
-            (vc as Record<string, unknown>)['triggerReason'] === 'wa_inactivity' &&
-            new Date(String((vc as Record<string, unknown>)['triggeredAt'])).getTime() >
+            (vc as unknown as Record<string, unknown>)['triggerReason'] === 'wa_inactivity' &&
+            new Date(String((vc as unknown as Record<string, unknown>)['triggeredAt'])).getTime() >
               Date.now() - THIRTY_MIN,
         );
         if (recentCall) {
