@@ -138,23 +138,40 @@ export class WhatsappInboxService {
     let oid: InstanceType<typeof Types.ObjectId> | null = null;
     try { oid = new Types.ObjectId(leadId); } catch { return []; }
 
-    const byLeadId = await this.messages()
-      .find({ lead_id: oid })
-      .sort({ created_at: 1 })
-      .toArray();
-
-    if (byLeadId.length) return byLeadId.map((d) => this._mapMsg(d));
-
     const lead = await this.leads().findOne({ _id: oid });
     if (!lead) return [];
 
+    // Always query by phone (catches messages logged before lead_id was tracked)
     const variants = this._phoneVariants(String(lead.phone ?? ''));
-    const byPhone = await this.messages()
-      .find({ phone: { $in: variants } })
-      .sort({ created_at: 1 })
-      .toArray();
+    const [byPhone, byLeadId] = await Promise.all([
+      this.messages()
+        .find({ phone: { $in: variants } })
+        .sort({ created_at: 1 })
+        .toArray(),
+      this.messages()
+        .find({ lead_id: oid })
+        .sort({ created_at: 1 })
+        .toArray(),
+    ]);
 
-    return byPhone.map((d) => this._mapMsg(d));
+    // Merge and deduplicate by _id so messages with lead_id don't appear twice
+    const seen = new Set<string>();
+    const merged: typeof byPhone = [];
+    for (const m of [...byPhone, ...byLeadId]) {
+      const key = String(m._id);
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(m);
+      }
+    }
+
+    merged.sort(
+      (a, b) =>
+        new Date(a.created_at as Date).getTime() -
+        new Date(b.created_at as Date).getTime(),
+    );
+
+    return merged.map((d) => this._mapMsg(d));
   }
 
   /**

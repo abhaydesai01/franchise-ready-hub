@@ -544,13 +544,29 @@ def _upsert_lead(phone: str, session: dict):
     if session.get("city"):
         update_fields["notes"] = _build_notes(session)
 
+    # Compute franchise readiness score from collected qualification data
+    score_dims = [
+        {"name": "Name",          "score": 5  if session.get("contact_name") else 0, "max": 5},
+        {"name": "Email",         "score": 10 if session.get("email")        else 0, "max": 10},
+        {"name": "Brand",         "score": 15 if session.get("brand_name")   else 0, "max": 15},
+        {"name": "Outlets",       "score": 10 if session.get("outlet_count") else 0, "max": 10},
+        {"name": "City",          "score": 5  if session.get("city")         else 0, "max": 5},
+        {"name": "Service Type",  "score": 20 if session.get("service_type") else 0, "max": 20},
+        {"name": "SOPs Ready",    "score": 20 if session.get("sops_ready")   else 0, "max": 20},
+        {"name": "Growth Goal",   "score": 15 if session.get("growth_goal")  else 0, "max": 15},
+    ]
+    computed_score = sum(d["score"] for d in score_dims)
+    derived_track  = "Franchise Ready" if computed_score >= 70 else "Not Ready"
+
+    update_fields["score"]           = computed_score
+    update_fields["scoreDimensions"] = score_dims
+    update_fields["track"]           = derived_track
+
     # $setOnInsert must not overlap with $set keys — build it without conflicting fields
     set_on_insert: dict = {
         "createdAt": now,
         "status": "New",
         "stage": "Gap Nurture",
-        "track": "Not Ready",
-        "score": 0,
         "tags": ["whatsapp-lead"],
         "value": 0,
     }
