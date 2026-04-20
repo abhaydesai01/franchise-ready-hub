@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
 import { WebhooksController } from './webhooks.controller';
 import { CalendlyWebhookService } from '../calendly/calendly-webhook.service';
 import { CalendlyReminderService } from '../calendly/calendly-reminder.service';
@@ -15,6 +16,7 @@ import { VaaniWebhookService } from '../voice/vaani-webhook.service';
 import { GeminiScoringModule } from '../voice/gemini-scoring.module';
 import { VoicePipelineSyncModule } from '../voice/voice-pipeline-sync.module';
 import { VoiceAdHocCalendarModule } from '../voice/voice-ad-hoc-calendar.module';
+import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 
 @Module({
   imports: [
@@ -29,6 +31,7 @@ import { VoiceAdHocCalendarModule } from '../voice/voice-ad-hoc-calendar.module'
     GeminiScoringModule,
     VoicePipelineSyncModule,
     VoiceAdHocCalendarModule,
+    MongooseModule.forFeature([{ name: Lead.name, schema: LeadSchema }]),
   ],
   controllers: [WebhooksController],
   providers: [

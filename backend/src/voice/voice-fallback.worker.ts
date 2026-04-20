@@ -191,6 +191,16 @@ async function run() {
           process.env.COMPANY_NAME ||
           'Franchise Ready';
 
+        // Fetch live slots and cache them so vaani-confirm-slot can book instantly
+        let slotsString = '';
+        try {
+          const slots = await calendar.getAvailableSlots('voice', 3);
+          await calendar.cacheVoiceSlots(d.leadId, slots);
+          slotsString = slots.map((s) => `Option ${s.index}: ${s.label}`).join(', ');
+        } catch (e) {
+          console.warn('[wa-inactivity] Could not fetch slots (calendar not configured?)', e);
+        }
+
         const { callId, dispatchId } = await vaani.triggerCall({
           leadId: d.leadId,
           contactNumber: lead.phone.replace(/\s/g, ''),
@@ -198,7 +208,7 @@ async function run() {
           triggerReason: 'wa_inactivity',
           readinessScore: lead.totalScore ?? lead.score ?? 0,
           readinessBand: readinessBandLabel(lead),
-          availableSlots: '',
+          availableSlots: slotsString,
           companyName,
           collectedFields: d.collectedFields,
           missingFields: d.missingFields,
