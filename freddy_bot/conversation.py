@@ -3,15 +3,16 @@ Freddy Conversation Engine — state-machine driving the onboarding flow
 followed by discovery-call slot booking.
 
 States:
-  WELCOME → Q_NAME → Q_BRAND → Q_OUTLETS → Q_CITY → Q_SERVICE → Q_SOPS → Q_GOAL
+  WELCOME → Q_NAME → Q_EMAIL → Q_BRAND → Q_OUTLETS → Q_CITY → Q_SERVICE → Q_SOPS → Q_GOAL
           → DATE_SELECT → SLOT_SELECT → DONE
 
 Flow:
   1. Welcome + ask name
-  2. 6 business questions
-  3. Show next 3 working days as buttons (skip Sat/Sun)
-  4. User picks a date → show available time slots for that day (numbered)
-  5. User picks a slot number → booked
+  2. Ask email (validated; user may type "skip" to skip)
+  3. 6 business questions
+  4. Show next 3 working days as buttons (skip Sat/Sun)
+  5. User picks a date → show available time slots for that day (numbered)
+  6. User picks a slot number → booked
 """
 
 import logging
@@ -38,6 +39,16 @@ SCRIPTS = {
         "discovery call with our Director, *Rahul*."
     ),
     "q_name": "May I know your *name*?",
+    "q_email": (
+        "Thank you, {name}! 😊\n\n"
+        "Could you please share your *email address*? "
+        "We'll send you the calendar invite and meeting details there.\n\n"
+        "_Type *skip* if you'd prefer not to share._"
+    ),
+    "q_email_invalid": (
+        "That doesn't look like a valid email address. "
+        "Please share a valid email (e.g. *yourname@gmail.com*), or type *skip* to continue without one."
+    ),
     "q_brand": "May I know your *brand name* and what *business category* you are in?",
     "q_outlets": "How many *operational outlets or locations* do you currently have?",
     "q_city": "Which *city* are you currently operating from?",
@@ -71,6 +82,7 @@ SCRIPTS = {
 STATES = [
     "WELCOME",
     "Q_NAME",
+    "Q_EMAIL",
     "Q_BRAND",
     "Q_OUTLETS",
     "Q_CITY",
@@ -85,6 +97,7 @@ STATES = [
 # Map state → session field for storing the answer
 STATE_FIELD_MAP = {
     "Q_NAME": "contact_name",
+    "Q_EMAIL": "email",
     "Q_BRAND": "brand_name",
     "Q_OUTLETS": "outlet_count",
     "Q_CITY": "city",
@@ -143,6 +156,7 @@ def _get_or_create_session(phone: str) -> dict:
         "phone": phone,
         "state": "WELCOME",
         "contact_name": None,
+        "email": None,
         "brand_name": None,
         "outlet_count": None,
         "city": None,
@@ -164,6 +178,26 @@ def _get_or_create_session(phone: str) -> dict:
 def _advance_state(current: str) -> str:
     idx = STATES.index(current)
     return STATES[idx + 1] if idx + 1 < len(STATES) else "DONE"
+
+
+def _is_valid_email(text: str) -> bool:
+    """Very lightweight email check — just needs @ and a dot after it."""
+    text = text.strip().lower()
+    if text in ("skip", "no", "none", "-", "na", "n/a"):
+        return True  # allowed skip values
+    at = text.find("@")
+    if at < 1:
+        return False
+    domain = text[at + 1:]
+    return "." in domain and len(domain) > 2
+
+
+def _normalise_email(text: str) -> str:
+    """Return empty string for skip keywords, otherwise return lowercased email."""
+    text = text.strip()
+    if text.lower() in ("skip", "no", "none", "-", "na", "n/a"):
+        return ""
+    return text.lower()
 
 
 def _extract_reply(message: dict) -> str:
@@ -326,7 +360,7 @@ def _overlaps_any(start: datetime, end: datetime, busy: list[tuple[datetime, dat
 
 # ── Sending questions / date offer / slot offer ──────────────
 
-def _send_question(phone: str, state: str):
+def _send_question(phone: str, state: str, session: dict | None = None):
     key = state.lower()
 
     if state == "WELCOME":
@@ -335,6 +369,13 @@ def _send_question(phone: str, state: str):
         # Immediately follow with the name question
         wa.send_text(phone, SCRIPTS["q_name"])
         _log_message(phone, "outbound", SCRIPTS["q_name"], "Q_NAME")
+
+    elif state == "Q_EMAIL":
+        # Personalise with the name they just gave
+        name = (session or {}).get("contact_name") or "there"
+        msg = SCRIPTS["q_email"].format(name=name)
+        wa.send_text(phone, msg)
+        _log_message(phone, "outbound", msg, state)
 
     elif state == "Q_SERVICE":
         wa.send_buttons(phone, SCRIPTS[key], SERVICE_BUTTONS)
@@ -447,8 +488,11 @@ def _upsert_lead(phone: str, session: dict):
     now = datetime.now(timezone.utc)
     activity_str = _format_activity_time()
 
+    # Normalise phone: store with country code digits only (e.g. 919834843396)
+    phone_digits = phone.replace("+", "").replace(" ", "")
+
     update_fields: dict = {
-        "phone": phone,
+        "phone": phone_digits,
         "source": "WhatsApp Inbound",
         "updatedAt": now,
         "lastActivity": activity_str,
@@ -458,16 +502,20 @@ def _upsert_lead(phone: str, session: dict):
     # Name = contact_name (person's name), company = brand_name
     if session.get("contact_name"):
         update_fields["name"] = session["contact_name"]
+    if session.get("email"):
+        update_fields["email"] = session["email"]
     if session.get("brand_name"):
         update_fields["company"] = session["brand_name"]
     if session.get("city"):
         update_fields["notes"] = _build_notes(session)
 
     result = leads_col().find_one_and_update(
-        {"phone": phone},
+        {"phone": phone_digits},
         {
             "$set": update_fields,
             "$setOnInsert": {
+                "name": session.get("contact_name") or f"WA Lead {phone_digits[-4:]}",
+                "email": session.get("email") or "",
                 "createdAt": now,
                 "status": "New",
                 "stage": "Gap Nurture",
@@ -484,7 +532,7 @@ def _upsert_lead(phone: str, session: dict):
     if result and "_id" in result:
         sessions_col().update_one(
             {"phone": phone},
-            {"$set": {"lead_id": result["_id"]}},
+            {"$set": {"lead_id": result["_id"], "phone_digits": phone_digits}},
         )
 
     return result
@@ -606,13 +654,11 @@ def handle_message(phone: str, message: dict):
 
     # ── WELCOME: first contact → send welcome + ask name
     if state == "WELCOME":
-        _send_question(phone, "WELCOME")
+        _send_question(phone, "WELCOME", session)
         sessions_col().update_one(
             {"phone": phone},
             {"$set": {"state": "Q_NAME", "updated_at": datetime.now(timezone.utc)}},
         )
-        welcome_msg = SCRIPTS["welcome"] + "\n\n" + SCRIPTS["q_name"]
-        _log_message(phone, "outbound", welcome_msg, "Q_NAME", lead_id=lead_id)
         return
 
     # ── DONE: already finished
@@ -668,7 +714,31 @@ def handle_message(phone: str, message: dict):
         _log_message(phone, "outbound", msg, state, lead_id=lead_id)
         return
 
-    # Save answer
+    # ── Q_EMAIL: validate format, re-ask if invalid
+    if state == "Q_EMAIL":
+        if not _is_valid_email(reply):
+            msg = SCRIPTS["q_email_invalid"]
+            wa.send_text(phone, msg)
+            _log_message(phone, "outbound", msg, state, lead_id=lead_id)
+            return  # stay in Q_EMAIL state — don't advance
+        # Valid or skipped — normalise and store
+        email_value = _normalise_email(reply)
+        sessions_col().update_one(
+            {"phone": phone},
+            {"$set": {"email": email_value, "updated_at": datetime.now(timezone.utc)}},
+        )
+        session = sessions_col().find_one({"phone": phone})
+        _upsert_lead(phone, session)
+        next_state = _advance_state(state)
+        sessions_col().update_one(
+            {"phone": phone},
+            {"$set": {"state": next_state, "updated_at": datetime.now(timezone.utc)}},
+        )
+        _send_question(phone, next_state, session)
+        logger.info("Phone %s: Q_EMAIL → %s (email: %s)", phone, next_state, email_value or "skipped")
+        return
+
+    # Save answer for all other question states
     field = STATE_FIELD_MAP.get(state)
     if field:
         answer = reply.replace("_", " ").title() if reply in BUTTON_IDS else reply
@@ -689,6 +759,6 @@ def handle_message(phone: str, message: dict):
     _upsert_lead(phone, session)
 
     # Send next question (or date selection or slot selection)
-    _send_question(phone, next_state)
+    _send_question(phone, next_state, session)
 
     logger.info("Phone %s: %s → %s (answered: %s)", phone, state, next_state, reply[:50])

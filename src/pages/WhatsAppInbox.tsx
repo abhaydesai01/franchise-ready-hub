@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 const STATE_LABELS: Record<string, string> = {
   WELCOME: 'Just started',
   Q_NAME: 'Asking name',
+  Q_EMAIL: 'Asking email',
   Q_BRAND: 'Asking brand',
   Q_OUTLETS: 'Asking outlets',
   Q_CITY: 'Asking city',
@@ -23,6 +24,7 @@ const STATE_LABELS: Record<string, string> = {
 const STATE_COLORS: Record<string, string> = {
   WELCOME: 'bg-gray-100 text-gray-600',
   Q_NAME: 'bg-blue-100 text-blue-700',
+  Q_EMAIL: 'bg-blue-100 text-blue-700',
   Q_BRAND: 'bg-blue-100 text-blue-700',
   Q_OUTLETS: 'bg-blue-100 text-blue-700',
   Q_CITY: 'bg-blue-100 text-blue-700',
