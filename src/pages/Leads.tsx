@@ -102,7 +102,11 @@ export default function Leads() {
     if (!selectedIds.length) return;
     try {
       const r = await removeBulk.mutateAsync(selectedIds);
-      toast.success(`Deleted ${r.removed} lead(s).`);
+      if (r.removed === 0) {
+        toast.error('No leads were deleted. You may not have permission to delete them.');
+      } else {
+        toast.success(`Deleted ${r.removed} lead(s).`);
+      }
       setSelectedIds([]);
       setDeleteOpen(false);
     } catch (err) {

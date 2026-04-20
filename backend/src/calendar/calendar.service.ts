@@ -778,7 +778,7 @@ export class CalendarService {
       outlookEventId,
       reminderJobIds: jobIds,
     };
-    lead.stage = 'call_booked';
+    lead.stage = lead.track === 'Franchise Ready' ? 'Discovery Booked' : 'Discovery Call';
     await lead.save();
 
     await this.sendBookingNotifications({
@@ -883,7 +883,7 @@ export class CalendarService {
       googleEventId,
       reminderJobIds: jobIds,
     };
-    lead.stage = 'call_booked';
+    lead.stage = lead.track === 'Franchise Ready' ? 'Discovery Booked' : 'Discovery Call';
     await lead.save();
 
     await this.activities.createForLead(input.leadId, {

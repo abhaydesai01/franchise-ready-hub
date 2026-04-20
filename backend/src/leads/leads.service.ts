@@ -1185,13 +1185,20 @@ export class LeadsService {
     user: CurrentUserPayload,
   ): Promise<{ ok: true; removed: number }> {
     let removed = 0;
+    const errors: string[] = [];
     for (const id of leadIds) {
       try {
         await this.remove(id, user);
         removed += 1;
       } catch (e) {
         this.log.warn(`removeMany skip id=${id}`, e);
+        errors.push(id);
       }
+    }
+    if (removed === 0 && errors.length > 0) {
+      throw new ForbiddenException(
+        'None of the selected leads could be deleted. You may not have permission to delete them.',
+      );
     }
     return { ok: true, removed };
   }

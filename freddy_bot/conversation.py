@@ -570,7 +570,7 @@ def _book_slot_fallback(lead_id, start: datetime, end: datetime):
                 "discoveryCall.endTime": end,
                 "discoveryCall.status": "scheduled",
                 "discoveryCall.bookedVia": "crm_bot",
-                "stage": "Discovery",
+                "stage": "Discovery Call",
                 "updatedAt": now,
                 "lastActivity": activity_str,
                 "lastActivityType": "discovery_call_booked",
