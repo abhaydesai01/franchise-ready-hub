@@ -3,7 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import type { Lead } from '../leads/schemas/lead.schema';
 import { SettingsService } from '../settings/settings.service';
 
-export type VoiceTriggerPoint = 'intro_no_response' | 'slot_no_response';
+export type VoiceTriggerPoint =
+  | 'intro_no_response'
+  | 'slot_no_response'
+  | 'wa_inactivity';
 
 function toE164(phone: string): string {
   const d = phone.replace(/\D/g, '');
@@ -23,12 +26,18 @@ export class VoiceAgentService {
   ) {}
 
   /**
-   * Start an outbound VAPI call. Configure assistant variables in the VAPI dashboard
-   * (firstName, companyName, triggerPoint, readinessBand, totalScore, calendlyLink).
+   * Start an outbound VAPI call.
+   *
+   * For `wa_inactivity` calls, pass `waContext` with the fields already collected
+   * and the fields still needed — the VAPI assistant uses these to focus the call.
+   *
+   * VAPI assistant variables: firstName, companyName, triggerPoint, readinessBand,
+   * totalScore, calendlyLink, collectedFields, missingFields
    */
   async initiateCall(
     lead: Lead & { _id: unknown },
     triggerPoint: VoiceTriggerPoint,
+    waContext?: { collectedFields: string; missingFields: string },
   ): Promise<{ ok: boolean; error?: string; callId?: string }> {
     const apiKey = this.config.get<string>('voiceApiKey')?.trim();
     const assistantId = this.config.get<string>('voiceAssistantId')?.trim();
@@ -68,6 +77,8 @@ export class VoiceAgentService {
       calendlyLink,
       readinessBand,
       totalScore,
+      collectedFields: waContext?.collectedFields ?? '',
+      missingFields: waContext?.missingFields ?? '',
     };
 
     const leadId = String((lead as { _id: { toString: () => string } })._id);
