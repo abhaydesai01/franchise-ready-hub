@@ -19,6 +19,7 @@ import Analytics from "@/pages/Analytics";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/NotFound";
 import ProposalViewPage from "@/pages/ProposalViewPage";
+import WhatsAppInbox from "@/pages/WhatsAppInbox";
 import { useAuth } from "@/hooks/useAuth";
 
 const queryClient = new QueryClient();
@@ -168,6 +169,16 @@ const App = () => (
               <ProtectedRoute>
                 <AppLayout>
                   <SettingsPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/whatsapp"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <WhatsAppInbox />
                 </AppLayout>
               </ProtectedRoute>
             }

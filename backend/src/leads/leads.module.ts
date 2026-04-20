@@ -20,6 +20,7 @@ import { CalendarModule } from '../calendar/calendar.module';
 import { GeminiScoringModule } from '../voice/gemini-scoring.module';
 import { VoicePipelineSyncModule } from '../voice/voice-pipeline-sync.module';
 import { VoiceAdHocCalendarModule } from '../voice/voice-ad-hoc-calendar.module';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { VoiceAdHocCalendarModule } from '../voice/voice-ad-hoc-calendar.module'
     GeminiScoringModule,
     VoicePipelineSyncModule,
     VoiceAdHocCalendarModule,
+    WhatsappModule,
   ],
   controllers: [LeadsController],
   providers: [LeadsService, PostCallPipelineService],

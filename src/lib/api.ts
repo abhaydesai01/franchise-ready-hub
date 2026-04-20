@@ -536,6 +536,24 @@ export async function fetchLeadConversation(leadId: string): Promise<WAConversat
   return apiRequest<WAConversation | null>(`/leads/${leadId}/whatsapp`);
 }
 
+export interface WAInboxItem {
+  sessionId: string;
+  phone: string;
+  leadId: string | null;
+  leadName: string;
+  state: string;
+  lastMessage: string;
+  lastMessageAt: string;
+  lastMessageDirection: 'inbound' | 'outbound';
+  isActive: boolean;
+  totalMessages: number;
+  createdAt: string;
+}
+
+export async function fetchWhatsAppInbox(): Promise<WAInboxItem[]> {
+  return apiRequest<WAInboxItem[]>('/whatsapp/inbox');
+}
+
 export async function fetchLeadBriefing(leadId: string): Promise<LeadBriefing> {
   return apiRequest<LeadBriefing>(`/leads/${leadId}/briefing`);
 }

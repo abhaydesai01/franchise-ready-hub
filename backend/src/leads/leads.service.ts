@@ -32,6 +32,7 @@ import { GeminiVoiceScoringService } from '../voice/gemini-voice-scoring.service
 import { VoicePipelineSyncService } from '../voice/voice-pipeline-sync.service';
 import { VoiceAdHocCalendarService } from '../voice/voice-ad-hoc-calendar.service';
 import type { VaaniTestCallDto } from './dto/vaani-test-call.dto';
+import { WhatsappInboxService } from '../whatsapp/whatsapp-inbox.service';
 
 export interface LeadListResult {
   leads: Array<Lead & { _id: string }>;
@@ -60,6 +61,7 @@ export class LeadsService {
     private readonly geminiVoiceScoring: GeminiVoiceScoringService,
     private readonly voicePipelineSync: VoicePipelineSyncService,
     private readonly voiceAdHocCalendar: VoiceAdHocCalendarService,
+    private readonly whatsappInbox: WhatsappInboxService,
   ) {}
 
   private async getThresholds() {
@@ -791,7 +793,20 @@ export class LeadsService {
       agentName: 'Automation',
     }));
 
-    const messages = [...activityMsgs, ...logMsgs].sort(
+    // Merge Freddy bot messages from freddy_messages collection
+    const freddyMsgs = await this.whatsappInbox.getMessagesByLeadId(leadId);
+    const freddyMapped = freddyMsgs.map((m) => ({
+      id: `freddy_${m.id}`,
+      leadId,
+      direction: m.direction,
+      type: 'text' as const,
+      body: m.body,
+      status: 'sent' as const,
+      timestamp: m.timestamp,
+      agentName: m.direction === 'outbound' ? 'Freddy Bot' : undefined,
+    }));
+
+    const messages = [...activityMsgs, ...logMsgs, ...freddyMapped].sort(
       (a, b) =>
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );

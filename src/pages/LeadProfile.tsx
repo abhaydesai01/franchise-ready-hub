@@ -5,7 +5,7 @@ import {
   useLeadJourney,
   useLeadConversation,
 } from '@/hooks/useLeads';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { ArrowLeft, Phone, FileText, ChevronDown, MessageCircle, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 export default function LeadProfile() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { data: lead, isLoading } = useLead(id || '');
   const { data: activities = [] } = useLeadActivity(id || '');
   const { data: journeyEvents = [] } = useLeadJourney(id || '');
@@ -37,12 +38,12 @@ export default function LeadProfile() {
   if (isLoading) return <div className="max-w-5xl mx-auto space-y-4"><SkeletonCard /><SkeletonCard /><SkeletonCard /></div>;
   if (!lead) return <div className="text-center py-16 text-brand-muted">Lead not found</div>;
 
+  const tabParam = searchParams.get('tab');
   const defaultActivityTab =
-    (lead.voiceCalls?.length ?? 0) > 0
-      ? 'voice'
-      : journeyEvents.length > 0
-        ? 'journey'
-        : 'activity';
+    tabParam === 'whatsapp' && conversation ? 'whatsapp'
+    : (lead.voiceCalls?.length ?? 0) > 0 ? 'voice'
+    : journeyEvents.length > 0 ? 'journey'
+    : 'activity';
 
   const handleAddNote = async () => {
     if (!noteText.trim()) return;

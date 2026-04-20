@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, KanbanSquare, Users, Phone, FileText, Zap,
   UserCheck, Settings, LogOut, Search, Plus, Menu, X, Bell,
-  BarChart3, CalendarDays
+  BarChart3, CalendarDays, MessageCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,7 @@ const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
   { icon: KanbanSquare, label: 'Pipeline', path: '/pipeline' },
   { icon: Users, label: 'Leads', path: '/leads' },
+  { icon: MessageCircle, label: 'WhatsApp', path: '/whatsapp' },
   { icon: Bell, label: 'Alerts', path: '/alerts' },
   { icon: BarChart3, label: 'Analytics', path: '/analytics' },
   { icon: Phone, label: 'Calls', path: '/calls' },
@@ -32,6 +33,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/pipeline': 'Pipeline',
   '/leads': 'Leads',
+  '/whatsapp': 'WhatsApp Inbox',
   '/alerts': 'Sales Alerts',
   '/analytics': 'Win/Loss Analytics',
   '/calls': 'Discovery Calls',

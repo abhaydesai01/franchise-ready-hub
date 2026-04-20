@@ -121,9 +121,10 @@ BUTTON_IDS = {
 
 # ── Helpers ───────────────────────────────────────────────────
 
-def _log_message(phone: str, direction: str, body: str, state: str, wa_msg_id: str | None = None):
+def _log_message(phone: str, direction: str, body: str, state: str, wa_msg_id: str | None = None, lead_id=None):
     messages_col().insert_one({
         "phone": phone,
+        "lead_id": lead_id,
         "direction": direction,
         "body": body,
         "wa_message_id": wa_msg_id,
@@ -555,7 +556,7 @@ def _book_slot(phone: str, session: dict, slot: dict):
     if meet_link:
         booked_msg += f"\n\n🔗 Meet link: {meet_link}"
     wa.send_text(phone, booked_msg)
-    _log_message(phone, "outbound", booked_msg, "DONE")
+    _log_message(phone, "outbound", booked_msg, "DONE", lead_id=lead_id)
 
 
 def _book_slot_fallback(lead_id, start: datetime, end: datetime):
@@ -595,7 +596,13 @@ def handle_message(phone: str, message: dict):
     session = _get_or_create_session(phone)
     state = session["state"]
 
-    _log_message(phone, "inbound", reply or "(media/unsupported)", state, wa_msg_id)
+    # Always ensure the lead exists from the very first message
+    if not session.get("lead_id"):
+        _upsert_lead(phone, session)
+        session = sessions_col().find_one({"phone": phone}) or session
+
+    lead_id = session.get("lead_id")
+    _log_message(phone, "inbound", reply or "(media/unsupported)", state, wa_msg_id, lead_id=lead_id)
 
     # ── WELCOME: first contact → send welcome + ask name
     if state == "WELCOME":
@@ -604,13 +611,14 @@ def handle_message(phone: str, message: dict):
             {"phone": phone},
             {"$set": {"state": "Q_NAME", "updated_at": datetime.now(timezone.utc)}},
         )
-        _upsert_lead(phone, session)
+        welcome_msg = SCRIPTS["welcome"] + "\n\n" + SCRIPTS["q_name"]
+        _log_message(phone, "outbound", welcome_msg, "Q_NAME", lead_id=lead_id)
         return
 
     # ── DONE: already finished
     if state == "DONE":
         wa.send_text(phone, SCRIPTS["done_fallback"])
-        _log_message(phone, "outbound", SCRIPTS["done_fallback"], state)
+        _log_message(phone, "outbound", SCRIPTS["done_fallback"], state, lead_id=lead_id)
         return
 
     # ── DATE_SELECT: waiting for date button click
@@ -620,7 +628,6 @@ def handle_message(phone: str, message: dict):
 
         if chosen in date_map:
             date_iso = date_map[chosen]
-            # Find the label for this date
             days = _get_next_working_days(count=3)
             date_label = next((d["label"] for d in days if d["date"] == date_iso), date_iso)
 
@@ -638,7 +645,7 @@ def handle_message(phone: str, message: dict):
         else:
             msg = "Please select one of the dates shown above."
             wa.send_text(phone, msg)
-            _log_message(phone, "outbound", msg, state)
+            _log_message(phone, "outbound", msg, state, lead_id=lead_id)
         return
 
     # ── SLOT_SELECT: waiting for slot number
@@ -651,13 +658,14 @@ def handle_message(phone: str, message: dict):
         else:
             msg = f"Please reply with a number between 1 and {len(slot_map)} to pick a slot."
             wa.send_text(phone, msg)
-            _log_message(phone, "outbound", msg, state)
+            _log_message(phone, "outbound", msg, state, lead_id=lead_id)
         return
 
     # ── Question states: save answer, advance, send next question
     if not reply:
-        wa.send_text(phone, "Sorry, I didn't catch that. Could you please reply with text?")
-        _log_message(phone, "outbound", "Sorry, I didn't catch that.", state)
+        msg = "Sorry, I didn't catch that. Could you please reply with text?"
+        wa.send_text(phone, msg)
+        _log_message(phone, "outbound", msg, state, lead_id=lead_id)
         return
 
     # Save answer
