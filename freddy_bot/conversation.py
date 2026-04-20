@@ -544,21 +544,27 @@ def _upsert_lead(phone: str, session: dict):
     if session.get("city"):
         update_fields["notes"] = _build_notes(session)
 
+    # $setOnInsert must not overlap with $set keys — build it without conflicting fields
+    set_on_insert: dict = {
+        "createdAt": now,
+        "status": "New",
+        "stage": "Gap Nurture",
+        "track": "Not Ready",
+        "score": 0,
+        "tags": ["whatsapp-lead"],
+        "value": 0,
+    }
+    # Only add name/email to $setOnInsert if they are NOT already in $set
+    if "name" not in update_fields:
+        set_on_insert["name"] = session.get("contact_name") or f"WA Lead {phone_digits[-4:]}"
+    if "email" not in update_fields:
+        set_on_insert["email"] = session.get("email") or ""
+
     result = leads_col().find_one_and_update(
         {"phone": phone_digits},
         {
             "$set": update_fields,
-            "$setOnInsert": {
-                "name": session.get("contact_name") or f"WA Lead {phone_digits[-4:]}",
-                "email": session.get("email") or "",
-                "createdAt": now,
-                "status": "New",
-                "stage": "Gap Nurture",
-                "track": "Not Ready",
-                "score": 0,
-                "tags": ["whatsapp-lead"],
-                "value": 0,
-            },
+            "$setOnInsert": set_on_insert,
         },
         upsert=True,
         return_document=True,
