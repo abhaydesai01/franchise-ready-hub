@@ -24,57 +24,53 @@ type WaStatus = {
   timestamp?: string;
 };
 
+type WaContact = { wa_id?: string; profile?: { name?: string } };
+
 function extractMessages(body: unknown): InboundMessageInput[] {
   const out: InboundMessageInput[] = [];
   const root = body as {
-    entry?: Array<{ changes?: Array<{ value?: { messages?: WaMessage[]; statuses?: WaStatus[] } }> }>;
+    entry?: Array<{
+      changes?: Array<{
+        value?: { messages?: WaMessage[]; statuses?: WaStatus[]; contacts?: WaContact[] };
+      }>;
+    }>;
   };
   for (const entry of root.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const messages = change.value?.messages;
       if (!messages) continue;
+      const profileByWaId = new Map<string, string>();
+      for (const c of change.value?.contacts ?? []) {
+        if (c.wa_id && c.profile?.name) profileByWaId.set(String(c.wa_id), String(c.profile.name));
+      }
       for (const m of messages) {
         const from = String(m.from ?? '');
         const messageId = String(m.id ?? '');
         const timestamp = String(m.timestamp ?? '');
         const type = String(m.type ?? 'text');
+        const profileName = profileByWaId.get(from);
+        const base = { from, messageId, timestamp, profileName };
         if (type === 'text') {
-          out.push({
-            from,
-            messageId,
-            type,
-            text: m.text?.body,
-            timestamp,
-          });
+          out.push({ ...base, type, text: m.text?.body });
         } else if (type === 'interactive' && m.interactive) {
           const ir = m.interactive;
           if (ir.type === 'button_reply' && ir.button_reply) {
             out.push({
-              from,
-              messageId,
+              ...base,
               type: 'interactive',
               buttonId: ir.button_reply.id,
               buttonTitle: ir.button_reply.title,
-              timestamp,
             });
           } else if (ir.type === 'list_reply' && ir.list_reply) {
             out.push({
-              from,
-              messageId,
+              ...base,
               type: 'interactive',
               listReplyId: ir.list_reply.id,
               buttonTitle: ir.list_reply.title,
-              timestamp,
             });
           }
         } else if (type === 'button') {
-          out.push({
-            from,
-            messageId,
-            type: 'button',
-            text: m.text?.body,
-            timestamp,
-          });
+          out.push({ ...base, type: 'button', text: m.text?.body });
         }
       }
     }

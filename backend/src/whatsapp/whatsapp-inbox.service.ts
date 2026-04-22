@@ -6,26 +6,22 @@ import { getSingletonBullConnection } from '../queues/redis-connection';
 
 const WA_INACTIVITY_DELAY_MS = 10 * 60 * 1000; // 10 minutes
 
-const FREDDY_STATE_FIELDS: Record<string, string> = {
-  Q_NAME: 'Name',
-  Q_EMAIL: 'Email',
-  Q_BRAND: 'Brand / Business',
-  Q_OUTLETS: 'No. of Outlets',
-  Q_CITY: 'City',
-  Q_SERVICE: 'Service Type',
-  Q_SOPS: 'SOPs Ready',
-  Q_GOAL: 'Growth Goal',
-};
-
-const FREDDY_SESSION_KEYS: Record<string, string> = {
-  Q_NAME: 'contact_name',
-  Q_EMAIL: 'email',
-  Q_BRAND: 'brand_name',
-  Q_OUTLETS: 'outlet_count',
-  Q_CITY: 'city',
-  Q_SERVICE: 'service_type',
-  Q_SOPS: 'sops_ready',
-  Q_GOAL: 'growth_goal',
+// Freddy v2 uses intent-based state (lastIntent field). These labels are used
+// to drive the WhatsApp Inbox page.
+const V2_STATE_LABELS: Record<string, string> = {
+  greeting: 'Greeting',
+  provide_name: 'Collecting name',
+  provide_email: 'Collecting email',
+  provide_phone: 'Collecting phone',
+  passive_scoring_signal: 'Scoring signal',
+  signal_ready_to_book: 'Ready to book',
+  prefer_voice: 'Voice preferred',
+  prefer_email: 'Email preferred',
+  investor_intent: 'Investor lead',
+  frustration_signal: 'Frustrated',
+  confirm_booking: 'Booked',
+  opt_out: 'Opted out',
+  out_of_scope: 'Out of scope',
 };
 
 export interface InboxConversation {
@@ -44,7 +40,7 @@ export interface InboxConversation {
 
 export interface FreddyMessage {
   id: string;
-  leadId: string | null;
+  leadId: string;
   phone: string;
   direction: 'inbound' | 'outbound';
   body: string;
@@ -58,44 +54,41 @@ export class WhatsappInboxService {
 
   constructor(@InjectConnection() private readonly conn: Connection) {}
 
-  private sessions() {
-    return this.conn.db!.collection('freddy_sessions');
+  private botSessions() {
+    return this.conn.db!.collection('botsessions');
   }
-  private messages() {
-    return this.conn.db!.collection('freddy_messages');
+  private conversations() {
+    return this.conn.db!.collection('conversations');
   }
   private leads() {
     return this.conn.db!.collection('leads');
   }
 
   async getInbox(): Promise<InboxConversation[]> {
-    const sessions = await this.sessions()
+    const sessions = await this.botSessions()
       .find({})
-      .sort({ updated_at: -1 })
+      .sort({ updatedAt: -1 })
       .limit(200)
       .toArray();
 
     if (!sessions.length) return [];
 
-    const phones = sessions.map((s) => s.phone as string);
+    const phones = sessions.map((s) => String(s.phone ?? ''));
+    const conversationIds = sessions
+      .map((s) => s.conversationId)
+      .filter((v): v is NonNullable<typeof v> => Boolean(v));
 
-    const lastMsgs = await this.messages()
-      .aggregate([
-        { $match: { phone: { $in: phones } } },
-        { $sort: { created_at: -1 } },
-        {
-          $group: {
-            _id: '$phone',
-            body: { $first: '$body' },
-            direction: { $first: '$direction' },
-            created_at: { $first: '$created_at' },
-            total: { $sum: 1 },
-          },
-        },
-      ])
+    const conversations = await this.conversations()
+      .find({ _id: { $in: conversationIds } })
+      .project({ _id: 1, messages: 1 })
       .toArray();
 
-    const msgMap = new Map(lastMsgs.map((m) => [m._id as string, m]));
+    const convoById = new Map<string, { messages: Array<Record<string, unknown>> }>();
+    for (const c of conversations) {
+      convoById.set(String(c._id), {
+        messages: (c.messages as Array<Record<string, unknown>>) ?? [],
+      });
+    }
 
     const allVariants = phones.flatMap((p) => this._phoneVariants(p));
     const leadsArr = await this.leads()
@@ -111,24 +104,31 @@ export class WhatsappInboxService {
 
     return sessions.map((s) => {
       const phone = String(s.phone ?? '');
-      const msg = msgMap.get(phone);
+      const convo = s.conversationId ? convoById.get(String(s.conversationId)) : undefined;
+      const lastMsg = convo?.messages?.[convo.messages.length - 1];
       const leadInfo = leadByPhone.get(this._normalizePhone(phone));
-      const sessionLeadId = s.lead_id ? String(s.lead_id) : null;
+      const sessionLeadId = s.leadId ? String(s.leadId) : null;
+      const lastIntent = String(s.lastIntent ?? '');
+      const state = lastIntent || 'greeting';
 
       return {
         sessionId: String(s._id),
         phone,
         leadId: sessionLeadId ?? leadInfo?.id ?? null,
-        leadName: leadInfo?.name ?? (String(s.contact_name ?? '') || 'Unknown'),
-        state: String(s.state ?? 'WELCOME'),
-        lastMessage: msg ? String(msg.body ?? '').slice(0, 120) : '',
-        lastMessageAt: msg?.created_at
-          ? new Date(msg.created_at as Date).toISOString()
-          : new Date((s.updated_at ?? s.created_at) as Date).toISOString(),
-        lastMessageDirection: (msg?.direction as 'inbound' | 'outbound') ?? 'inbound',
-        isActive: s.state !== 'DONE',
-        totalMessages: Number(msg?.total ?? 0),
-        createdAt: new Date(s.created_at as Date).toISOString(),
+        leadName:
+          leadInfo?.name && leadInfo.name !== 'WhatsApp lead'
+            ? leadInfo.name
+            : String(s.collectedName ?? '') || leadInfo?.name || 'Unknown',
+        state,
+        lastMessage: lastMsg ? String(lastMsg.text ?? '').slice(0, 120) : '',
+        lastMessageAt: lastMsg?.createdAt
+          ? new Date(lastMsg.createdAt as Date).toISOString()
+          : new Date((s.lastMessageAt ?? s.updatedAt ?? s.createdAt) as Date).toISOString(),
+        lastMessageDirection:
+          ((lastMsg?.role === 'assistant' ? 'outbound' : 'inbound') as 'inbound' | 'outbound'),
+        isActive: !s.optedOut && state !== 'confirm_booking' && state !== 'opt_out',
+        totalMessages: convo?.messages?.length ?? 0,
+        createdAt: new Date((s.createdAt ?? new Date()) as Date).toISOString(),
       };
     });
   }
@@ -138,40 +138,21 @@ export class WhatsappInboxService {
     let oid: InstanceType<typeof Types.ObjectId> | null = null;
     try { oid = new Types.ObjectId(leadId); } catch { return []; }
 
-    const lead = await this.leads().findOne({ _id: oid });
-    if (!lead) return [];
+    const convo = await this.conversations().findOne({ leadId: oid });
+    if (!convo) return [];
 
-    // Always query by phone (catches messages logged before lead_id was tracked)
-    const variants = this._phoneVariants(String(lead.phone ?? ''));
-    const [byPhone, byLeadId] = await Promise.all([
-      this.messages()
-        .find({ phone: { $in: variants } })
-        .sort({ created_at: 1 })
-        .toArray(),
-      this.messages()
-        .find({ lead_id: oid })
-        .sort({ created_at: 1 })
-        .toArray(),
-    ]);
+    const phone = String(convo.phone ?? '');
+    const messages = (convo.messages as Array<Record<string, unknown>>) ?? [];
 
-    // Merge and deduplicate by _id so messages with lead_id don't appear twice
-    const seen = new Set<string>();
-    const merged: typeof byPhone = [];
-    for (const m of [...byPhone, ...byLeadId]) {
-      const key = String(m._id);
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push(m);
-      }
-    }
-
-    merged.sort(
-      (a, b) =>
-        new Date(a.created_at as Date).getTime() -
-        new Date(b.created_at as Date).getTime(),
-    );
-
-    return merged.map((d) => this._mapMsg(d));
+    return messages.map((m, idx) => ({
+      id: `${String(convo._id)}_${idx}`,
+      leadId,
+      phone,
+      direction: m.role === 'assistant' ? ('outbound' as const) : ('inbound' as const),
+      body: String(m.text ?? ''),
+      botState: String(m.intent ?? ''),
+      timestamp: new Date((m.createdAt ?? Date.now()) as Date).toISOString(),
+    }));
   }
 
   /**
@@ -188,32 +169,20 @@ export class WhatsappInboxService {
     const { phone, leadId, state, session } = params;
 
     // States that should NOT trigger a call
-    if (!leadId || state === 'DONE' || state === 'WELCOME' || state === 'SLOT_SELECT') {
+    if (!leadId || state === 'confirm_booking' || state === 'opt_out') {
       return;
     }
 
-    // Build collected / missing field summaries
-    const allStates = Object.keys(FREDDY_STATE_FIELDS);
-    const collected: string[] = [];
-    const missing: string[] = [];
-    for (const st of allStates) {
-      const key = FREDDY_SESSION_KEYS[st];
-      if (session[key]) {
-        collected.push(FREDDY_STATE_FIELDS[st]);
-      } else {
-        missing.push(FREDDY_STATE_FIELDS[st]);
-      }
-    }
-
-    const knownName = String(session['contact_name'] ?? '');
+    const knownName = String(session['collectedName'] ?? session['contact_name'] ?? '');
+    const stateLabel = V2_STATE_LABELS[state] ?? state;
     const jobId = `wa_inactivity_${leadId}`;
     const jobData = {
       leadId,
       phone,
       state,
       knownName,
-      collectedFields: collected.join(', ') || 'none yet',
-      missingFields: missing.join(', ') || 'all collected',
+      collectedFields: stateLabel,
+      missingFields: '',
     };
 
     let q: Queue | null = null;
@@ -241,18 +210,6 @@ export class WhatsappInboxService {
     } finally {
       if (q) await q.close();
     }
-  }
-
-  private _mapMsg(d: Record<string, unknown>): FreddyMessage {
-    return {
-      id: String(d._id),
-      leadId: d.lead_id ? String(d.lead_id) : null,
-      phone: String(d.phone ?? ''),
-      direction: (d.direction as 'inbound' | 'outbound') ?? 'inbound',
-      body: String(d.body ?? ''),
-      botState: String(d.bot_state ?? ''),
-      timestamp: new Date(d.created_at as Date).toISOString(),
-    };
   }
 
   private _normalizePhone(p: string): string {

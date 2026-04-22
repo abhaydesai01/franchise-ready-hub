@@ -92,14 +92,57 @@ export function classifyIntent(messageText: string): FreddyIntent {
 
   if (EMAIL_RE.test(text)) return 'provide_email';
   if (PHONE_RE.test(text)) return 'provide_phone';
-  if (/^[a-z][a-z\s.'-]{1,50}$/i.test(text)) return 'provide_name';
+
+  if (/^(hi|hello|hey|heya|hii|hiya|hai|helo|hlw|hola)[!.?\s]*$/i.test(text)) return 'greeting';
+  if (/^(yes|yeah|yep|yup|sure|okay|ok|great|sounds good|alright)[!.?\s]*$/i.test(text)) return 'positive_response';
+  if (/^(no|nope|nah|not now|not interested)[!.?\s]*$/i.test(text)) return 'negative_response';
 
   if (/\b(hi|hello|hey)\b/.test(t)) return 'greeting';
+
+  if (looksLikePassiveScoringSignal(t)) return 'passive_scoring_signal';
+
+  if (isPlausibleName(text)) return 'provide_name';
+
   if (/\b(yes|sure|okay|great)\b/.test(t)) return 'positive_response';
   if (/\b(no|not now)\b/.test(t)) return 'negative_response';
 
-  if (looksLikePassiveScoringSignal(t)) return 'passive_scoring_signal';
   return 'out_of_scope';
+}
+
+const COMMON_NON_NAME_WORDS = new Set([
+  'hi', 'hello', 'hey', 'heya', 'hii', 'hiya', 'hai', 'helo', 'hlw', 'hola',
+  'yes', 'yeah', 'yep', 'yup', 'sure', 'okay', 'ok', 'great', 'alright',
+  'no', 'nope', 'nah', 'not',
+  'thanks', 'thank', 'thx', 'ty',
+  'cool', 'nice', 'good', 'fine', 'bad',
+  'test', 'testing',
+  'bye', 'goodbye',
+]);
+
+// Words that almost never appear in a human name. If any are present, the text
+// is a sentence (e.g. "I am interested", "tell me more"), not a name.
+const SENTENCE_INDICATORS = new Set([
+  'i', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'the', 'a', 'an',
+  'my', 'your', 'our', 'their', 'his', 'her',
+  'me', 'you', 'we', 'they', 'us', 'them', 'him', 'it',
+  'what', 'why', 'how', 'when', 'where', 'who', 'which',
+  'do', 'does', 'did', 'have', 'has', 'had',
+  'can', 'could', 'will', 'would', 'should', 'may', 'might', 'must',
+  'tell', 'show', 'send', 'give', 'want', 'need',
+  'of', 'for', 'to', 'in', 'on', 'at', 'with', 'from', 'about',
+  'and', 'or', 'but',
+  'interested', 'interest', 'ready', 'looking', 'thinking',
+]);
+
+function isPlausibleName(text: string): boolean {
+  const trimmed = text.trim();
+  if (!/^[a-z][a-z\s.'-]{1,50}$/i.test(trimmed)) return false;
+  const words = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 1) return false;
+  if (words.length > 4) return false;
+  if (words.some((w) => SENTENCE_INDICATORS.has(w))) return false;
+  return !words.every((w) => COMMON_NON_NAME_WORDS.has(w));
 }
 
 export function looksLikePassiveScoringSignal(textLower: string): boolean {

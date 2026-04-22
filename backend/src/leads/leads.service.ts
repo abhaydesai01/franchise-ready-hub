@@ -1179,7 +1179,7 @@ export class LeadsService {
     id: string,
     user: CurrentUserPayload,
   ): Promise<{ ok: true }> {
-    await this.findById(id, user);
+    const lead = await this.findById(id, user);
     try {
       await this.calendar.cancelBooking(id);
     } catch {
@@ -1187,12 +1187,47 @@ export class LeadsService {
     }
     await this.activityModel.deleteMany({ leadId: id });
     await this.automationLogModel.deleteMany({ leadId: id });
+
+    // Cascade delete Freddy v2 session + conversation + legacy freddy_bot data.
+    // These live in Mongo but aren't owned by the leads model, so we do it via
+    // the raw connection.
+    try {
+      const conn = this.leadModel.db;
+      const { Types } = await import('mongoose');
+      const leadOid = new Types.ObjectId(id);
+      const phoneVariants = this._phoneVariants(String(lead.phone ?? ''));
+      await Promise.all([
+        conn.collection('botsessions').deleteMany({
+          $or: [{ leadId: leadOid }, { phone: { $in: phoneVariants } }],
+        }),
+        conn.collection('conversations').deleteMany({
+          $or: [{ leadId: leadOid }, { phone: { $in: phoneVariants } }],
+        }),
+        conn.collection('freddy_sessions').deleteMany({
+          $or: [{ lead_id: leadOid }, { phone: { $in: phoneVariants } }],
+        }),
+        conn.collection('freddy_messages').deleteMany({
+          $or: [{ lead_id: leadOid }, { phone: { $in: phoneVariants } }],
+        }),
+      ]);
+    } catch (e) {
+      this.log.warn(`Cascade delete skipped for lead=${id}: ${String(e)}`);
+    }
+
     const r = await this.leadModel.findByIdAndDelete(id).exec();
     if (!r) {
       throw new NotFoundException('Lead not found');
     }
     this.log.log(`Lead deleted id=${id}`);
     return { ok: true };
+  }
+
+  private _phoneVariants(phone: string): string[] {
+    const digits = String(phone ?? '').replace(/\D/g, '');
+    if (!digits) return phone ? [phone] : [];
+    const variants = new Set([phone, digits, `+${digits}`]);
+    if (digits.startsWith('91') && digits.length === 12) variants.add(digits.slice(2));
+    return Array.from(variants);
   }
 
   async removeMany(

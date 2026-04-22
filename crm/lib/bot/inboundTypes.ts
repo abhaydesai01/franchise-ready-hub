@@ -8,4 +8,5 @@ export interface InboundMessageInput {
   buttonTitle?: string;
   listReplyId?: string;
   timestamp: string;
+  profileName?: string;
 }

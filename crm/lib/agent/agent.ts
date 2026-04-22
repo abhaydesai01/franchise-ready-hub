@@ -16,11 +16,15 @@ function inboundText(msg: InboundMessageInput): string {
   return (msg.text ?? msg.buttonTitle ?? msg.listReplyId ?? msg.buttonId ?? '').trim();
 }
 
-async function ensureLead(phone: string): Promise<{ _id: string; name: string; email?: string }> {
+async function ensureLead(
+  phone: string,
+  profileName?: string,
+): Promise<{ _id: string; name: string; email?: string }> {
   let lead = await Lead.findOne({ phone }).exec();
+  const trimmedProfile = (profileName ?? '').trim();
   if (!lead) {
     lead = await Lead.create({
-      name: 'WhatsApp lead',
+      name: trimmedProfile || 'WhatsApp lead',
       phone,
       source: 'whatsapp_inbound',
       track: 'not_ready',
@@ -29,6 +33,9 @@ async function ensureLead(phone: string): Promise<{ _id: string; name: string; e
       score: 0,
       scoreDimensions: [],
     });
+  } else if (trimmedProfile && (!lead.name || lead.name === 'WhatsApp lead')) {
+    lead.name = trimmedProfile;
+    await lead.save();
   }
   return { _id: String(lead._id), name: lead.name, email: lead.email ?? undefined };
 }
@@ -104,8 +111,13 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
   const v2EnabledForLead = isFreddyV2EnabledForPhone(phone);
   console.log(`[freddy] inbound phone=${phone} text=${JSON.stringify(text)} v2=${v2EnabledForLead}`);
 
-  const lead = await ensureLead(phone);
+  const lead = await ensureLead(phone, input.profileName);
   const session = await ensureSession(lead, phone);
+  if (input.profileName && (!session.collectedName || session.collectedName === 'WhatsApp lead')) {
+    session.collectedName = input.profileName.trim();
+    session.goalTracker = { ...(session.goalTracker ?? {}), has_name: true };
+    await session.save();
+  }
   if (session.optedOut) {
     console.log(`[freddy] skipped (optedOut) phone=${phone}`);
     return;
