@@ -212,6 +212,18 @@ export class Lead {
 
   @Prop()
   utmCampaign?: string;
+
+  @Prop({ type: Object, default: {} })
+  freddyMetrics?: {
+    totalMessages?: number;
+    passiveScores?: number;
+    directScores?: number;
+    guardrailFails?: number;
+    channelSwitches?: number;
+    outOfScopeCount?: number;
+    firstResponseTime?: Date;
+    lastResponseTime?: Date;
+  };
 }
 
 export const LeadSchema = SchemaFactory.createForClass(Lead);

@@ -207,7 +207,7 @@ async function main() {
 
       const session = await BotSession.findById(sessionId).lean();
       if (!session || session.optedOut) return;
-      if (session.state !== expectedState) return;
+      if (session.lastIntent && session.lastIntent !== expectedState) return;
 
       const nudgeMsg = templates.scoringNudgeSoft(round);
       const res = await sendText(phone, nudgeMsg.text);

@@ -153,6 +153,22 @@ const LeadSchema = new Schema(
 
     proposalCheckinSentAt: { type: Date },
     proposalCheckinReplyAlertAt: { type: Date },
+    freddyMetrics: {
+      type: new Schema(
+        {
+          totalMessages: { type: Number, default: 0 },
+          passiveScores: { type: Number, default: 0 },
+          directScores: { type: Number, default: 0 },
+          guardrailFails: { type: Number, default: 0 },
+          channelSwitches: { type: Number, default: 0 },
+          outOfScopeCount: { type: Number, default: 0 },
+          firstResponseTime: { type: Date },
+          lastResponseTime: { type: Date },
+        },
+        { _id: false },
+      ),
+      default: () => ({}),
+    },
   },
   { timestamps: true },
 );
