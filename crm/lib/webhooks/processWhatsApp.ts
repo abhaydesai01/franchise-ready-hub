@@ -122,13 +122,19 @@ async function applyStatusUpdate(s: WaStatus) {
 }
 
 export async function processWhatsAppPayload(raw: string, signatureHeader: string | null): Promise<boolean> {
-  if (!verifyWebhookSignature(raw, signatureHeader)) return false;
+  if (!verifyWebhookSignature(raw, signatureHeader)) {
+    console.warn('[whatsapp webhook] signature rejected');
+    return false;
+  }
   let body: unknown;
   try {
     body = JSON.parse(raw) as unknown;
   } catch {
     return true;
   }
+  const msgCount = extractMessages(body).length;
+  const statusCount = extractStatuses(body).length;
+  console.log(`[whatsapp webhook] received messages=${msgCount} statuses=${statusCount}`);
   void (async () => {
     try {
       await connectDB();

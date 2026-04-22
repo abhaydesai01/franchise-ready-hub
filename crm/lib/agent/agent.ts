@@ -102,10 +102,14 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
   const text = inboundText(input);
   if (!text) return;
   const v2EnabledForLead = isFreddyV2EnabledForPhone(phone);
+  console.log(`[freddy] inbound phone=${phone} text=${JSON.stringify(text)} v2=${v2EnabledForLead}`);
 
   const lead = await ensureLead(phone);
   const session = await ensureSession(lead, phone);
-  if (session.optedOut) return;
+  if (session.optedOut) {
+    console.log(`[freddy] skipped (optedOut) phone=${phone}`);
+    return;
+  }
 
   if (!v2EnabledForLead) {
     await sendText(
@@ -150,6 +154,9 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
 
   const { calendlyLink } = await getCrmSettings();
   const bookingLink = calendlyLink || 'https://cal.com/franchise-ready/discovery';
+  console.log(
+    `[freddy] reply phone=${phone} intent=${intent} action=${handlerResult.action} passiveScores=${passiveSignalCount} text=${JSON.stringify(reply.text)}`,
+  );
   await dispatchChannelAction({
     session: freshSession,
     handlerResult,
