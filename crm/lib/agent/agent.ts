@@ -16,6 +16,23 @@ function inboundText(msg: InboundMessageInput): string {
   return (msg.text ?? msg.buttonTitle ?? msg.listReplyId ?? msg.buttonId ?? '').trim();
 }
 
+// Collected names that were stored before the classifier fix — treat as placeholders
+// so a real WhatsApp profile name overwrites them on the next inbound message.
+const STALE_COLLECTED_NAMES = new Set([
+  '', 'whatsapp lead',
+  'hi', 'hello', 'hey', 'heya', 'hii', 'hiya', 'hai', 'helo', 'hlw', 'hola',
+  'yes', 'yeah', 'yep', 'yup', 'sure', 'okay', 'ok', 'great', 'alright',
+  'no', 'nope', 'nah',
+  'thanks', 'thank you', 'thx', 'ty',
+  'test', 'testing',
+]);
+
+function shouldUpgradeCollectedName(current: string | undefined | null, profile: string): boolean {
+  if (!profile.trim()) return false;
+  const c = (current ?? '').trim().toLowerCase();
+  return STALE_COLLECTED_NAMES.has(c);
+}
+
 async function ensureLead(
   phone: string,
   profileName?: string,
@@ -33,7 +50,7 @@ async function ensureLead(
       score: 0,
       scoreDimensions: [],
     });
-  } else if (trimmedProfile && (!lead.name || lead.name === 'WhatsApp lead')) {
+  } else if (trimmedProfile && shouldUpgradeCollectedName(lead.name, trimmedProfile)) {
     lead.name = trimmedProfile;
     await lead.save();
   }
@@ -113,7 +130,7 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
 
   const lead = await ensureLead(phone, input.profileName);
   const session = await ensureSession(lead, phone);
-  if (input.profileName && (!session.collectedName || session.collectedName === 'WhatsApp lead')) {
+  if (input.profileName && shouldUpgradeCollectedName(session.collectedName, input.profileName)) {
     session.collectedName = input.profileName.trim();
     session.goalTracker = { ...(session.goalTracker ?? {}), has_name: true };
     await session.save();

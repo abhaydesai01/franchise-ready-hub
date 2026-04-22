@@ -116,7 +116,10 @@ export class LeadsService {
         ? lead.ownerId === oid
         : String(lead.ownerId) === oid);
     const legacyAssigned = !lead.ownerId && lead.assignedTo === user.name;
-    if (!ownerMatches && !legacyAssigned) {
+    // Unowned + unassigned leads (e.g. WhatsApp inbound from Freddy) are accessible
+    // to any authenticated user until a human claims them.
+    const unclaimed = !lead.ownerId && !lead.assignedTo;
+    if (!ownerMatches && !legacyAssigned && !unclaimed) {
       throw new ForbiddenException('You do not have access to this lead');
     }
   }
