@@ -17,6 +17,7 @@ import {
   parseTextForStep,
   renderPrompt,
   scoresFromAnswers,
+  softRetry,
   type FlowAnswers,
   type FlowStepId,
   type Prompt,
@@ -415,9 +416,14 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
       messagesToSend.push({ kind: 'text', payload: checked.safeReply });
     }
   } else if (advanced) {
-    // Short native acknowledgement for stuff like "got it, <email>".
+    // Warm bridge for "got it, <brand>" etc.
     const ack = acknowledgement(stepBefore, fresh.flowAnswers as FlowAnswers, fresh);
     if (ack) messagesToSend.push({ kind: 'text', payload: ack });
+  } else if (!isSubstantiveSide && !replyId) {
+    // User typed something but we couldn't parse it and there's no side question.
+    // Send a gentle nudge specific to the step, then re-issue the prompt.
+    const nudge = softRetry(stepBefore);
+    if (nudge) messagesToSend.push({ kind: 'text', payload: nudge });
   }
 
   // 2. Next step's prompt (or close message if flow is done).

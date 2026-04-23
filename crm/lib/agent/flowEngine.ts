@@ -41,7 +41,7 @@ export type FlowAnswers = {
   sopsDocumented?: 'yes' | 'need_support';
   mainGoal?: 'one_city' | 'across_india' | 'international';
   timeline?: 'this_month' | '1_3_months' | '6_months' | 'exploring';
-  capital?: 'lt_10' | '10_25' | '25_50' | 'gt_50';
+  capital?: 'lt_10' | '10_25' | '25_50' | '50_100' | 'gt_100';
   closeChoice?: 'send_link' | 'call_me' | 'later';
 };
 
@@ -55,7 +55,6 @@ function answers(session: BotSessionDocument): FlowAnswers {
   return (session.flowAnswers ?? {}) as FlowAnswers;
 }
 
-/** Has this step's answer already been captured? */
 function isStepComplete(session: BotSessionDocument, step: FlowStepId): boolean {
   const a = answers(session);
   switch (step) {
@@ -114,32 +113,83 @@ export function nextStepAfter(step: FlowStepId): FlowStepId {
   return STEP_ORDER[idx + 1];
 }
 
-/** Build the WhatsApp prompt for a given step. */
+// Human-friendly labels for the recap in the close step.
+export function labelFor(key: keyof FlowAnswers, value: string): string {
+  switch (key) {
+    case 'outlets':
+      return value === '1' ? '1 outlet' : value === '2-4' ? '2–4 outlets' : '5+ outlets';
+    case 'serviceType':
+      return value === 'full_consulting'
+        ? 'build the full franchise system'
+        : value === 'recruitment_only'
+          ? 'find qualified franchisees'
+          : 'both build + recruit';
+    case 'sopsDocumented':
+      return value === 'yes' ? 'systems documented' : 'need support building systems';
+    case 'mainGoal':
+      return value === 'one_city'
+        ? 'one-city expansion'
+        : value === 'across_india'
+          ? 'across India'
+          : 'international growth';
+    case 'timeline':
+      return value === 'this_month'
+        ? 'starting this month'
+        : value === '1_3_months'
+          ? 'next 1–3 months'
+          : value === '6_months'
+            ? 'within 6 months'
+            : 'exploring timelines';
+    case 'capital':
+      return value === 'lt_10'
+        ? 'under ₹10L'
+        : value === '10_25'
+          ? '₹10L–₹25L'
+          : value === '25_50'
+            ? '₹25L–₹50L'
+            : value === '50_100'
+              ? '₹50L–₹1Cr'
+              : '₹1Cr+';
+    default:
+      return value;
+  }
+}
+
+function stepNumber(step: FlowStepId): number {
+  return STEP_ORDER.indexOf(step) + 1;
+}
+
 export function renderPrompt(step: FlowStepId, session: BotSessionDocument): Prompt | null {
   const name = fName(session);
+  const a = answers(session);
+  const total = STEP_ORDER.length - 1; // exclude close_booking from the "N of M" count
+  const n = stepNumber(step);
+
   switch (step) {
     case 'collect_email':
       return {
         type: 'text',
-        text: `Hi ${name}! I'm Freddy from Franchise Ready. To start, what is the best *email* to share next steps on?`,
+        text:
+          `Hi ${name}! I'm *Freddy* from Franchise Ready. I'll ask a few quick questions to understand your brand and match you with the right expert.\n\n` +
+          `To begin — what's the best *email* to share next steps on?`,
       };
 
     case 'collect_brand':
       return {
         type: 'text',
-        text: `Thanks! May I know your *brand name*?`,
+        text: `Thanks ${name}. What's the *brand name* you're looking to franchise?`,
       };
 
     case 'collect_category':
       return {
         type: 'list',
-        body: `What *business category* are you in?`,
+        body: `Which *category* does ${a.brand ?? 'your brand'} belong to?`,
         buttonLabel: 'Choose category',
         sections: [
           {
             title: 'Categories',
             rows: [
-              { id: 'cat_food', title: 'Food & Beverage', description: 'Restaurants, cafes, QSR, cloud kitchen' },
+              { id: 'cat_food', title: 'Food & Beverage', description: 'Restaurants, cafés, QSR, cloud kitchen' },
               { id: 'cat_retail', title: 'Retail', description: 'Apparel, grocery, lifestyle, specialty' },
               { id: 'cat_services', title: 'Services', description: 'Salon, repair, home services' },
               { id: 'cat_education', title: 'Education', description: 'Coaching, preschool, skills' },
@@ -153,7 +203,7 @@ export function renderPrompt(step: FlowStepId, session: BotSessionDocument): Pro
     case 'collect_outlets':
       return {
         type: 'buttons',
-        body: `How many *operational outlets* do you currently run?`,
+        body: `How many *operational outlets* of ${a.brand ?? 'your brand'} are running today?`,
         buttons: [
           { id: 'outlets_1', title: 'Just 1' },
           { id: 'outlets_2_4', title: '2 to 4' },
@@ -164,16 +214,20 @@ export function renderPrompt(step: FlowStepId, session: BotSessionDocument): Pro
     case 'collect_city':
       return {
         type: 'text',
-        text: `Which *city* are you currently operating from?`,
+        text: `Which *city* are you operating from right now?`,
       };
 
     case 'collect_service_type':
       return {
         type: 'buttons',
-        body: `Are you looking for *full franchise consulting*, *franchise recruitment*, or *both*?`,
+        body:
+          `Two ways we usually help:\n` +
+          `• *Build the system* — documentation, pricing, franchise kit\n` +
+          `• *Find franchisees* — qualified investor outreach\n\n` +
+          `Which fits you best?`,
         buttons: [
-          { id: 'svc_full', title: 'Full Consulting' },
-          { id: 'svc_recruit', title: 'Recruitment' },
+          { id: 'svc_full', title: 'Build the system' },
+          { id: 'svc_recruit', title: 'Find franchisees' },
           { id: 'svc_both', title: 'Both' },
         ],
       };
@@ -181,9 +235,9 @@ export function renderPrompt(step: FlowStepId, session: BotSessionDocument): Pro
     case 'collect_sops':
       return {
         type: 'buttons',
-        body: `Have you already *documented your operations, costing, and SOPs*, or would you need support in building that?`,
+        body: `Are your *operations, pricing, and SOPs* already documented, or would you want support in building those?`,
         buttons: [
-          { id: 'sops_yes', title: 'Yes, documented' },
+          { id: 'sops_yes', title: 'Already ready' },
           { id: 'sops_need', title: 'Need support' },
         ],
       };
@@ -191,7 +245,7 @@ export function renderPrompt(step: FlowStepId, session: BotSessionDocument): Pro
     case 'collect_goal':
       return {
         type: 'buttons',
-        body: `What is your main *goal* right now — expansion in one city, across India, or international growth?`,
+        body: `Where do you want ${a.brand ?? 'the brand'} to grow?`,
         buttons: [
           { id: 'goal_city', title: 'One city' },
           { id: 'goal_india', title: 'Across India' },
@@ -202,7 +256,7 @@ export function renderPrompt(step: FlowStepId, session: BotSessionDocument): Pro
     case 'collect_timeline':
       return {
         type: 'list',
-        body: `What *timeline* are you targeting to begin franchising?`,
+        body: `When would you want to *start franchising*?`,
         buttonLabel: 'Pick timeline',
         sections: [
           {
@@ -220,31 +274,53 @@ export function renderPrompt(step: FlowStepId, session: BotSessionDocument): Pro
     case 'collect_capital':
       return {
         type: 'list',
-        body: `Roughly, what *capital range* are you comfortable allocating for expansion?`,
-        buttonLabel: 'Pick capital',
+        body:
+          `Last one — this helps us match you to the right programme. ` +
+          `Roughly, what *investment range* are you comfortable allocating for franchising?`,
+        buttonLabel: 'Pick range',
         sections: [
           {
-            title: 'Capital range',
+            title: 'Investment range',
             rows: [
               { id: 'cap_lt10', title: 'Under ₹10L' },
               { id: 'cap_10_25', title: '₹10L – ₹25L' },
               { id: 'cap_25_50', title: '₹25L – ₹50L' },
-              { id: 'cap_gt50', title: '₹50L or more' },
+              { id: 'cap_50_100', title: '₹50L – ₹1Cr' },
+              { id: 'cap_gt100', title: '₹1Cr or more' },
             ],
           },
         ],
       };
 
-    case 'close_booking':
+    case 'close_booking': {
+      const recapLines: string[] = [];
+      if (a.brand) {
+        const cat = a.category ? ` (${a.category})` : '';
+        recapLines.push(`• ${a.brand}${cat}`);
+      }
+      const running: string[] = [];
+      if (a.outlets) running.push(labelFor('outlets', a.outlets));
+      if (a.city) running.push(`in ${a.city}`);
+      if (running.length) recapLines.push(`• ${running.join(' ')} today`);
+      if (a.serviceType) recapLines.push(`• Looking to ${labelFor('serviceType', a.serviceType)}`);
+      if (a.mainGoal) recapLines.push(`• Goal: ${labelFor('mainGoal', a.mainGoal)}`);
+      if (a.timeline) recapLines.push(`• Timeline: ${labelFor('timeline', a.timeline)}`);
+      if (a.capital) recapLines.push(`• Investment range: ${labelFor('capital', a.capital)}`);
+
+      const recap = recapLines.length ? `\n\nHere's what I've got:\n${recapLines.join('\n')}\n` : '\n\n';
+
       return {
         type: 'buttons',
-        body: `Thank you for sharing all that, ${name}. Based on what you told me, a short *Discovery Call* with Rahul will be the right next step.`,
+        body:
+          `Thank you, ${name}.${recap}\n` +
+          `Based on this, the best next step is a *20-minute Discovery Call* with *Rahul Malik* — he'll walk you through exactly how we'd approach your case.`,
         buttons: [
-          { id: 'close_link', title: 'Send the link' },
-          { id: 'close_call', title: 'Call me instead' },
+          { id: 'close_link', title: 'Book the call' },
+          { id: 'close_call', title: 'Call me now' },
           { id: 'close_later', title: 'Maybe later' },
         ],
       };
+    }
 
     case 'done':
       return null;
@@ -252,9 +328,11 @@ export function renderPrompt(step: FlowStepId, session: BotSessionDocument): Pro
     default:
       return null;
   }
+  // (n / total are available for progress hints if you later want them; kept to avoid unused-var warnings)
+  void n;
+  void total;
 }
 
-/** Map a tapped button or list-reply id to a structured answer. */
 export function parseButtonReply(step: FlowStepId, id: string): Partial<FlowAnswers> | null {
   const map: Record<string, Partial<FlowAnswers>> = {
     cat_food: { category: 'Food & Beverage' },
@@ -287,7 +365,8 @@ export function parseButtonReply(step: FlowStepId, id: string): Partial<FlowAnsw
     cap_lt10: { capital: 'lt_10' },
     cap_10_25: { capital: '10_25' },
     cap_25_50: { capital: '25_50' },
-    cap_gt50: { capital: 'gt_50' },
+    cap_50_100: { capital: '50_100' },
+    cap_gt100: { capital: 'gt_100' },
 
     close_link: { closeChoice: 'send_link' },
     close_call: { closeChoice: 'call_me' },
@@ -295,7 +374,6 @@ export function parseButtonReply(step: FlowStepId, id: string): Partial<FlowAnsw
   };
   const v = map[id];
   if (!v) return null;
-  // Guard: only accept if the button belongs to the current step family.
   if (step === 'collect_category' && v.category) return v;
   if (step === 'collect_outlets' && v.outlets) return v;
   if (step === 'collect_service_type' && v.serviceType) return v;
@@ -307,7 +385,6 @@ export function parseButtonReply(step: FlowStepId, id: string): Partial<FlowAnsw
   return null;
 }
 
-/** Heuristic parsers so the user can answer a button step with plain text too. */
 export function parseTextForStep(step: FlowStepId, text: string): Partial<FlowAnswers> | null {
   const t = text.toLowerCase().trim();
   if (!t) return null;
@@ -352,12 +429,12 @@ export function parseTextForStep(step: FlowStepId, text: string): Partial<FlowAn
     }
     case 'collect_service_type': {
       if (/\bboth\b/.test(t)) return { serviceType: 'both' };
-      if (/recruit/.test(t)) return { serviceType: 'recruitment_only' };
-      if (/consult|full/.test(t)) return { serviceType: 'full_consulting' };
+      if (/recruit|franchisee|find/.test(t)) return { serviceType: 'recruitment_only' };
+      if (/consult|full|build|system|sop/.test(t)) return { serviceType: 'full_consulting' };
       return null;
     }
     case 'collect_sops': {
-      if (/yes|documented|already|ready|have/.test(t)) return { sopsDocumented: 'yes' };
+      if (/yes|documented|already|ready|have|done/.test(t)) return { sopsDocumented: 'yes' };
       if (/no|need|help|support|building|not yet/.test(t)) return { sopsDocumented: 'need_support' };
       return null;
     }
@@ -375,7 +452,8 @@ export function parseTextForStep(step: FlowStepId, text: string): Partial<FlowAn
       return null;
     }
     case 'collect_capital': {
-      if (/crore|\b50.?l|60.?l|70.?l|80.?l|90.?l|1\s?cr/.test(t)) return { capital: 'gt_50' };
+      if (/\b(2|3|4|5|10)\s?cr|crore/.test(t)) return { capital: 'gt_100' };
+      if (/\b50.?l|60.?l|70.?l|80.?l|90.?l|1\s?cr/.test(t)) return { capital: '50_100' };
       if (/\b25.?l|30.?l|35.?l|40.?l|45.?l/.test(t)) return { capital: '25_50' };
       if (/\b10.?l|15.?l|20.?l/.test(t)) return { capital: '10_25' };
       if (/\b5.?l|under\s*10|less than|small/.test(t)) return { capital: 'lt_10' };
@@ -384,7 +462,7 @@ export function parseTextForStep(step: FlowStepId, text: string): Partial<FlowAn
     case 'close_booking': {
       if (/call|phone|ring|voice/.test(t)) return { closeChoice: 'call_me' };
       if (/later|not now|busy|next week/.test(t)) return { closeChoice: 'later' };
-      if (/yes|sure|ok|link|send|go ahead|please do/.test(t)) return { closeChoice: 'send_link' };
+      if (/yes|sure|ok|link|send|book|go ahead|please do/.test(t)) return { closeChoice: 'send_link' };
       return null;
     }
     default:
@@ -392,7 +470,7 @@ export function parseTextForStep(step: FlowStepId, text: string): Partial<FlowAn
   }
 }
 
-/** Score rubric mapping from button answers to 0-25 dimension scores. */
+/** Score rubric from button answers into 0-25 dimension scores. */
 export function scoresFromAnswers(a: FlowAnswers): Record<string, number> {
   const s: Record<string, number> = {};
   if (a.outlets === '1') s.score_location = 5;
@@ -404,12 +482,12 @@ export function scoresFromAnswers(a: FlowAnswers): Record<string, number> {
   if (a.timeline === '6_months') s.score_timeline = 15;
   if (a.timeline === 'exploring') s.score_timeline = 5;
 
-  if (a.capital === 'lt_10') s.score_capital = 5;
-  if (a.capital === '10_25') s.score_capital = 12;
-  if (a.capital === '25_50') s.score_capital = 18;
-  if (a.capital === 'gt_50') s.score_capital = 25;
+  if (a.capital === 'lt_10') s.score_capital = 4;
+  if (a.capital === '10_25') s.score_capital = 10;
+  if (a.capital === '25_50') s.score_capital = 16;
+  if (a.capital === '50_100') s.score_capital = 22;
+  if (a.capital === 'gt_100') s.score_capital = 25;
 
-  // commitment is inferred: serious timeline + any service type selected = committed.
   if (a.serviceType && (a.timeline === 'this_month' || a.timeline === '1_3_months')) {
     s.score_commitment = 22;
   } else if (a.serviceType) {
@@ -422,31 +500,77 @@ export function scoresFromAnswers(a: FlowAnswers): Record<string, number> {
   return s;
 }
 
-/** Short acknowledgement we say AFTER a valid answer, right before the next step's prompt. */
+/**
+ * Short acknowledgement sent AFTER a valid answer, right before the next step's prompt.
+ * These are sales "warm bridges" — specific, contextual, never generic.
+ */
 export function acknowledgement(step: FlowStepId, a: FlowAnswers, session: BotSessionDocument): string {
   const name = fName(session);
   switch (step) {
     case 'collect_email':
-      return `Got it, I have noted ${a.email}.`;
+      return `Got it — noted ${a.email}.`;
+
     case 'collect_brand':
-      return `Nice — ${a.brand}.`;
+      return `*${a.brand}* — love the name.`;
+
     case 'collect_category':
-      return `Great, ${a.category}.`;
-    case 'collect_outlets':
-      return a.outlets === '1' ? `Single outlet — got it.` : `${a.outlets} outlets — noted.`;
+      return `Great, ${a.category} is one of our strongest categories.`;
+
+    case 'collect_outlets': {
+      // Value-inject based on scale — this is where sales momentum gets built.
+      if (a.outlets === '1')
+        return `Perfect — a single outlet is the ideal stage to build the franchise blueprint right.`;
+      if (a.outlets === '2-4')
+        return `That's the inflection point — this is exactly where systematising pays off the most.`;
+      return `Excellent — you're already at the scale where the right growth partner moves the needle fastest.`;
+    }
+
     case 'collect_city':
-      return `Noted, ${a.city}.`;
+      return `Noted — ${a.city}.`;
+
     case 'collect_service_type':
-      return `Understood.`;
+      if (a.serviceType === 'both')
+        return `Got it — end-to-end support is usually the highest-ROI path.`;
+      if (a.serviceType === 'recruitment_only')
+        return `Understood — we'll focus on getting you qualified franchisees.`;
+      return `Understood — building the system first sets the right foundation.`;
+
     case 'collect_sops':
-      return a.sopsDocumented === 'yes' ? `Perfect, that will speed things up.` : `Noted, we can help you build those.`;
+      return a.sopsDocumented === 'yes'
+        ? `Perfect, that will speed things up significantly.`
+        : `Noted — that's one of the first things we'd build together.`;
+
     case 'collect_goal':
-      return `Got it.`;
+      if (a.mainGoal === 'international') return `Ambitious — we love that.`;
+      if (a.mainGoal === 'across_india') return `Pan-India — got it.`;
+      return `One-city focus — solid foundation before scaling.`;
+
     case 'collect_timeline':
-      return `Thanks ${name}.`;
+      if (a.timeline === 'this_month' || a.timeline === '1_3_months')
+        return `Great, you're moving at the right pace.`;
+      return `Noted, ${name} — gives us room to build things properly.`;
+
     case 'collect_capital':
-      return `Noted.`;
+      return `Thanks, that helps us match you to the right programme.`;
+
     default:
       return '';
+  }
+}
+
+/**
+ * If the parser / LLM couldn't extract anything valid, this is the gentle retry prompt
+ * we send BEFORE re-issuing the step prompt, so the user doesn't feel ignored.
+ */
+export function softRetry(step: FlowStepId): string | null {
+  switch (step) {
+    case 'collect_email':
+      return `I didn't catch a valid email there — could you share it in the format *name@example.com*?`;
+    case 'collect_city':
+      return `Could you share just the *city name*? For example — Mumbai, Bengaluru, Delhi.`;
+    case 'collect_brand':
+      return `Could you share your *brand name* — just the name is enough.`;
+    default:
+      return null;
   }
 }
