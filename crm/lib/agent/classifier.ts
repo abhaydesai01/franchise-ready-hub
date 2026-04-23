@@ -32,20 +32,44 @@ export type FreddyIntent =
 const EMAIL_RE = /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/i;
 const PHONE_RE = /\b(?:\+?91[\s-]?)?[6-9]\d{9}\b/;
 
-function hasAny(text: string, terms: string[]): boolean {
-  return terms.some((t) => text.includes(t));
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Word-boundary match. Prevents e.g. "ai" matching inside "desai" or "gmail".
+function hasWord(text: string, terms: string[]): boolean {
+  const re = new RegExp(`\\b(?:${terms.map(escapeRegex).join('|')})\\b`, 'i');
+  return re.test(text);
+}
+
+// Free-form phrase match (substrings allowed for multi-word expressions).
+function hasPhrase(text: string, phrases: string[]): boolean {
+  return phrases.some((p) => text.includes(p));
 }
 
 export function classifyIntent(messageText: string): FreddyIntent {
   const text = messageText.trim();
   const t = text.toLowerCase();
 
-  if (hasAny(t, ['stop', 'unsubscribe', 'opt out'])) return 'opt_out';
-  if (hasAny(t, ['reschedule', 'another time'])) return 'reschedule';
-  if (hasAny(t, ['booked', 'done booking', 'scheduled'])) return 'confirm_booking';
+  // 1. High-confidence structured patterns first — email / phone cannot be
+  //    misclassified by ambiguous keywords.
+  if (EMAIL_RE.test(text)) return 'provide_email';
+  if (PHONE_RE.test(text)) return 'provide_phone';
 
+  // 2. Pure short greetings / yes / no — handled before any keyword search so
+  //    "Hello" is never classified as a name or FAQ.
+  if (/^(hi|hello|hey|heya|hii+|hiya|hai|helo|hlw|hola)[!.?\s]*$/i.test(text)) return 'greeting';
+  if (/^(yes|yeah|yep|yup|sure|okay|ok|great|sounds good|alright)[!.?\s]*$/i.test(text)) return 'positive_response';
+  if (/^(no|nope|nah|not now|not interested)[!.?\s]*$/i.test(text)) return 'negative_response';
+
+  // 3. Opt-out / reschedule / confirm booking.
+  if (hasWord(t, ['stop', 'unsubscribe']) || hasPhrase(t, ['opt out', 'opt-out'])) return 'opt_out';
+  if (hasWord(t, ['reschedule']) || hasPhrase(t, ['another time'])) return 'reschedule';
+  if (hasWord(t, ['booked', 'scheduled']) || hasPhrase(t, ['done booking'])) return 'confirm_booking';
+
+  // 4. Channel preference.
   if (
-    hasAny(t, [
+    hasPhrase(t, [
       'call me',
       'can we talk',
       'i prefer speaking',
@@ -60,11 +84,17 @@ export function classifyIntent(messageText: string): FreddyIntent {
   ) {
     return 'prefer_voice';
   }
-  if (hasAny(t, ['email me', 'prefer email', 'send over email', 'by email'])) return 'prefer_email';
-  if (hasAny(t, ['investor', 'buy a franchise', 'franchise partner'])) return 'investor_intent';
-  if (hasAny(t, ['frustrated', 'annoyed', 'you keep asking', 'this is useless'])) return 'frustration_signal';
+  if (hasPhrase(t, ['email me', 'prefer email', 'send over email', 'by email'])) return 'prefer_email';
+
+  // 5. Intent signals.
+  if (hasWord(t, ['investor', 'investors']) || hasPhrase(t, ['buy a franchise', 'franchise partner'])) {
+    return 'investor_intent';
+  }
+  if (hasWord(t, ['frustrated', 'annoyed']) || hasPhrase(t, ['you keep asking', 'this is useless'])) {
+    return 'frustration_signal';
+  }
   if (
-    hasAny(t, [
+    hasPhrase(t, [
       'what next',
       'get started',
       'getting started',
@@ -76,35 +106,36 @@ export function classifyIntent(messageText: string): FreddyIntent {
     return 'signal_ready_to_book';
   }
 
-  if (hasAny(t, ['cost', 'price', 'fees', 'investment'])) return 'faq_cost';
-  if (hasAny(t, ['process', 'how it works', 'steps'])) return 'faq_process';
-  if (hasAny(t, ['about franchise ready', 'who is rahul', 'about you'])) return 'faq_about_fr';
-  if (hasAny(t, ['timeline', 'how long', 'months'])) return 'faq_timeline';
-  if (hasAny(t, ['program', 'programme', 'plans'])) return 'faq_programmes';
-  if (hasAny(t, ['success', 'case study', 'results'])) return 'faq_success';
-  if (hasAny(t, ['team', 'who will work'])) return 'faq_team';
-  if (hasAny(t, ['bot', 'ai', 'robot'])) return 'faq_whatsapp_bot';
+  // 6. FAQs — word-boundary ONLY so "cost" never matches "costly" and "ai"
+  //    never matches inside names/emails.
+  if (hasWord(t, ['cost', 'costs', 'price', 'pricing', 'fee', 'fees', 'investment'])) return 'faq_cost';
+  if (hasWord(t, ['process', 'steps']) || hasPhrase(t, ['how it works'])) return 'faq_process';
+  if (hasPhrase(t, ['about franchise ready', 'who is rahul', 'about you'])) return 'faq_about_fr';
+  if (hasWord(t, ['timeline', 'months']) || hasPhrase(t, ['how long'])) return 'faq_timeline';
+  if (hasWord(t, ['program', 'programs', 'programme', 'programmes', 'plans'])) return 'faq_programmes';
+  if (hasWord(t, ['success', 'results']) || hasPhrase(t, ['case study'])) return 'faq_success';
+  if (hasWord(t, ['team']) || hasPhrase(t, ['who will work'])) return 'faq_team';
+  if (hasWord(t, ['bot', 'ai', 'robot', 'chatbot'])) return 'faq_whatsapp_bot';
 
-  if (hasAny(t, ['not ready'])) return 'objection_not_ready';
-  if (hasAny(t, ['need to think', 'let me think'])) return 'objection_think';
-  if (hasAny(t, ['too expensive', 'price is high'])) return 'objection_price';
-  if (hasAny(t, ['not sure', 'unsure'])) return 'objection_not_sure';
+  // 7. Objections.
+  if (hasPhrase(t, ['not ready'])) return 'objection_not_ready';
+  if (hasPhrase(t, ['need to think', 'let me think'])) return 'objection_think';
+  if (hasPhrase(t, ['too expensive', 'price is high'])) return 'objection_price';
+  if (hasPhrase(t, ['not sure']) || hasWord(t, ['unsure'])) return 'objection_not_sure';
 
-  if (EMAIL_RE.test(text)) return 'provide_email';
-  if (PHONE_RE.test(text)) return 'provide_phone';
+  // 8. Embedded greeting (e.g. "hi there").
+  if (hasWord(t, ['hi', 'hello', 'hey'])) return 'greeting';
 
-  if (/^(hi|hello|hey|heya|hii|hiya|hai|helo|hlw|hola)[!.?\s]*$/i.test(text)) return 'greeting';
-  if (/^(yes|yeah|yep|yup|sure|okay|ok|great|sounds good|alright)[!.?\s]*$/i.test(text)) return 'positive_response';
-  if (/^(no|nope|nah|not now|not interested)[!.?\s]*$/i.test(text)) return 'negative_response';
-
-  if (/\b(hi|hello|hey)\b/.test(t)) return 'greeting';
-
+  // 9. Passive scoring signals (numbers of years, outlets, capital, etc.).
   if (looksLikePassiveScoringSignal(t)) return 'passive_scoring_signal';
 
+  // 10. Name — only if it really looks like a name (2-4 words, no sentence
+  //     indicators, not a greeting).
   if (isPlausibleName(text)) return 'provide_name';
 
-  if (/\b(yes|sure|okay|great)\b/.test(t)) return 'positive_response';
-  if (/\b(no|not now)\b/.test(t)) return 'negative_response';
+  // 11. Loose yes/no as fallback.
+  if (hasWord(t, ['yes', 'sure', 'okay', 'great'])) return 'positive_response';
+  if (hasWord(t, ['no'])) return 'negative_response';
 
   return 'out_of_scope';
 }
@@ -150,7 +181,6 @@ export function looksLikePassiveScoringSignal(textLower: string): boolean {
     /\b(\d+)\s*(year|years)\b/.test(textLower) ||
     /\b(\d+)\s*(outlet|outlets|store|stores|location|locations)\b/.test(textLower) ||
     /(₹|rs\.?|lakh(s)?|crore)/.test(textLower) ||
-    hasAny(textLower, ['ready to expand', 'want to franchise', 'immediately', 'next month'])
+    hasPhrase(textLower, ['ready to expand', 'want to franchise', 'immediately', 'next month'])
   );
 }
-

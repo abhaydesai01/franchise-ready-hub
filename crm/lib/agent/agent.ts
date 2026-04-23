@@ -152,7 +152,13 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
   await appendConversation(session, { role: 'user', text });
 
   const intent = classifyIntent(text);
-  const handlerResultPromise = routeToHandler(session, intent, text);
+
+  // Run the handler FIRST and await it so any data (email, phone, name,
+  // scores) is persisted before we compute missing goals / the next question.
+  // Previously these ran in parallel and `freshSession` was often read before
+  // the handler finished, which caused Freddy to re-ask for data the user had
+  // just provided (the "same loop" the user reported).
+  const handlerResult = await routeToHandler(session, intent, text);
 
   let passiveSignalCount = 0;
   if (looksLikePassiveScoringSignal(text.toLowerCase())) {
@@ -171,7 +177,6 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
   const freshSession = (await BotSession.findById(session._id).exec()) ?? session;
   const missingGoals = getMissingGoals(freshSession);
   const nextQuestion = getNextQuestion(freshSession, missingGoals);
-  const handlerResult = await handlerResultPromise;
 
   const reply = await generateReply({
     session: freshSession,
@@ -179,6 +184,7 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
     missingGoals,
     nextQuestion,
     handlerResult,
+    userText: text,
   });
 
   const { calendlyLink } = await getCrmSettings();
@@ -201,6 +207,11 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
     scoringSignal: passiveSignalCount > 0 ? `passive:${passiveSignalCount}` : undefined,
   });
 
+  const previousQuestion = (freshSession.lastQuestionAsked ?? '').trim();
+  const askedNow = (reply.questionAsked ?? '').trim();
+  const isRepeatedQuestion = Boolean(askedNow) && askedNow === previousQuestion;
+  const nextRepeatCount = isRepeatedQuestion ? (freshSession.repeatCount ?? 0) + 1 : 0;
+
   await BotSession.updateOne(
     { _id: freshSession._id },
     {
@@ -208,6 +219,10 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
         lastIntent: intent,
         lastIntentAt: new Date(),
         lastMessageAt: new Date(),
+        lastQuestionAsked: askedNow || null,
+        lastQuestionSentAt: askedNow ? new Date() : freshSession.lastQuestionSentAt,
+        lastAssistantText: reply.text,
+        repeatCount: nextRepeatCount,
       },
     },
   );
