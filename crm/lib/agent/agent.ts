@@ -394,8 +394,22 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
   // ---- Build outgoing messages -------------------------------------------
   const messagesToSend: { kind: 'text' | 'prompt'; payload: string | Prompt }[] = [];
 
-  // 1. Side reply (if the LLM had anything to say about a side topic).
-  if (sideReply) {
+  const substantiveSideIntents = new Set<FreddyIntent>([
+    'faq_cost', 'faq_process', 'faq_about_fr', 'faq_timeline',
+    'faq_programmes', 'faq_success', 'faq_team', 'faq_whatsapp_bot',
+    'objection_not_ready', 'objection_think', 'objection_price', 'objection_not_sure',
+    'high_value_signal', 'signal_ready_to_book', 'confirm_booking', 'reschedule',
+    'investor_intent', 'out_of_scope',
+  ]);
+  const isSubstantiveSide = sideIntent !== null && substantiveSideIntents.has(sideIntent);
+
+  // Guard: never send a sideReply that would duplicate the step prompt we're
+  // about to send. If the user didn't advance AND didn't ask something real,
+  // stay silent and let the deterministic prompt speak.
+  const suppressSideReply = sideReply.length === 0 || (!advanced && !isSubstantiveSide);
+
+  // 1. Side reply (only for substantive off-flow questions).
+  if (!suppressSideReply) {
     const checked = await guardrailCheck(sideReply);
     if (checked.safeReply) {
       messagesToSend.push({ kind: 'text', payload: checked.safeReply });
