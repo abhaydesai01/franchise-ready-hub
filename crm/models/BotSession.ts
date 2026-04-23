@@ -51,6 +51,11 @@ const BotSessionSchema = new Schema(
     repeatCount: { type: Number, default: 0 },
     retryCount: { type: Number, default: 0 },
     optedOut: { type: Boolean, default: false },
+
+    // Structured onboarding flow (see lib/agent/flowEngine.ts for the spec).
+    currentStep: { type: String, default: null },
+    flowAnswers: { type: Schema.Types.Mixed, default: () => ({}) },
+    flowCompletedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

@@ -3,23 +3,33 @@ import { Lead } from '@/models/Lead';
 import { BotSession, type BotSessionDocument } from '@/models/BotSession';
 import { Conversation } from '@/models/Conversation';
 import type { InboundMessageInput } from '@/lib/bot/inboundTypes';
-import { formatPhone } from '@/lib/whatsapp';
-import { classifyIntent, looksLikePassiveScoringSignal, type FreddyIntent } from './classifier';
-import { getMissingGoals, getNextQuestion, passiveScoreExtractor } from './goalTracker';
-import { routeToHandler, type HandlerResult } from './handlers';
-import { generateReply } from './responder';
+import { formatPhone, sendText, sendButtons, sendList } from '@/lib/whatsapp';
+import { enqueueVoiceAgentCall } from '@/lib/queues';
+import { classifyIntent, type FreddyIntent } from './classifier';
 import { guardrailCheck } from './responder';
-import { dispatchChannelAction } from './channelRouter';
 import { isFreddyV2EnabledForPhone } from './featureFlags';
-import { sendText } from '@/lib/whatsapp';
-import { decideWithLlm, isLlmBrainEnabled, type LlmAction, type LlmExtracted } from './llmBrain';
+import { decideWithLlm, isLlmBrainEnabled } from './llmBrain';
+import {
+  acknowledgement,
+  getCurrentStep,
+  nextStepAfter,
+  parseButtonReply,
+  parseTextForStep,
+  renderPrompt,
+  scoresFromAnswers,
+  type FlowAnswers,
+  type FlowStepId,
+  type Prompt,
+} from './flowEngine';
 
 function inboundText(msg: InboundMessageInput): string {
   return (msg.text ?? msg.buttonTitle ?? msg.listReplyId ?? msg.buttonId ?? '').trim();
 }
 
-// Collected names that were stored before the classifier fix — treat as placeholders
-// so a real WhatsApp profile name overwrites them on the next inbound message.
+function inboundReplyId(msg: InboundMessageInput): string | null {
+  return (msg.buttonId ?? msg.listReplyId ?? null) || null;
+}
+
 const STALE_COLLECTED_NAMES = new Set([
   '', 'whatsapp lead',
   'hi', 'hello', 'hey', 'heya', 'hii', 'hiya', 'hai', 'helo', 'hlw', 'hola',
@@ -72,7 +82,20 @@ async function ensureSession(lead: { _id: string; name: string; email?: string }
         has_email: Boolean(lead.email),
         has_phone: Boolean(phone),
       },
+      flowAnswers: lead.email ? { email: lead.email } : {},
     });
+  } else {
+    // Back-fill flowAnswers for sessions created before the flow engine shipped.
+    const fa = (session.flowAnswers ?? {}) as Record<string, unknown>;
+    let dirty = false;
+    if (!fa.email && lead.email) {
+      fa.email = lead.email;
+      dirty = true;
+    }
+    if (dirty) {
+      session.flowAnswers = fa;
+      await session.save();
+    }
   }
   if (!session.conversationId) {
     const convo = await Conversation.create({ leadId: lead._id, phone, messages: [] });
@@ -82,30 +105,105 @@ async function ensureSession(lead: { _id: string; name: string; email?: string }
   return session;
 }
 
-async function appendConversation(
+async function appendUser(session: BotSessionDocument, text: string): Promise<void> {
+  if (!session.conversationId) return;
+  const convo = await Conversation.findById(session.conversationId).exec();
+  if (!convo) return;
+  await convo.appendMessage({ role: 'user', text });
+}
+
+async function appendAssistant(
   session: BotSessionDocument,
-  payload: { role: 'user' | 'assistant'; text: string; intent?: string; scoringSignal?: string },
+  text: string,
+  intent?: string,
 ): Promise<void> {
   if (!session.conversationId) return;
   const convo = await Conversation.findById(session.conversationId).exec();
   if (!convo) return;
-  await convo.appendMessage(payload);
+  await convo.appendMessage({ role: 'assistant', text, intent });
 }
 
-async function updateFreddyMetrics(leadId: string, updates: {
-  totalMessages?: number;
-  passiveScores?: number;
-  directScores?: number;
-  guardrailFails?: number;
-  channelSwitches?: number;
-  outOfScopeCount?: number;
-}): Promise<void> {
+function promptToTranscript(p: Prompt | null): string {
+  if (!p) return '';
+  if (p.type === 'text') return p.text;
+  if (p.type === 'buttons') {
+    const labels = p.buttons.map((b) => b.title).join(' / ');
+    return `${p.body} [${labels}]`;
+  }
+  const labels = p.sections.flatMap((s) => s.rows.map((r) => r.title)).join(' / ');
+  return `${p.body} [${labels}]`;
+}
+
+async function sendPrompt(phone: string, prompt: Prompt): Promise<void> {
+  if (prompt.type === 'text') {
+    await sendText(phone, prompt.text);
+  } else if (prompt.type === 'buttons') {
+    await sendButtons(phone, prompt.body, prompt.buttons);
+  } else {
+    await sendList(phone, prompt.body, prompt.buttonLabel, prompt.sections);
+  }
+}
+
+/** Persist a flow-step answer to session, update lead where relevant, add scores. */
+async function applyFlowAnswer(
+  session: BotSessionDocument,
+  leadId: string,
+  answer: Partial<FlowAnswers>,
+): Promise<void> {
+  const merged: FlowAnswers = { ...(session.flowAnswers ?? {}), ...answer };
+  const sessionSet: Record<string, unknown> = { flowAnswers: merged };
+  const leadSet: Record<string, unknown> = {};
+  const scorecardSet: Record<string, unknown> = {};
+
+  if (answer.email) {
+    sessionSet.collectedEmail = answer.email;
+    sessionSet['goalTracker.has_email'] = true;
+    leadSet.email = answer.email;
+  }
+  if (answer.brand) {
+    leadSet.company = answer.brand;
+  }
+  if (answer.category) scorecardSet['scorecardAnswers.businessCategory'] = answer.category;
+  if (answer.outlets) scorecardSet['scorecardAnswers.outlets'] = answer.outlets;
+  if (answer.city) scorecardSet['scorecardAnswers.targetLocation'] = answer.city;
+  if (answer.serviceType) scorecardSet['scorecardAnswers.serviceType'] = answer.serviceType;
+  if (answer.sopsDocumented) scorecardSet['scorecardAnswers.sopsDocumented'] = answer.sopsDocumented;
+  if (answer.mainGoal) scorecardSet['scorecardAnswers.mainGoal'] = answer.mainGoal;
+
+  const scores = scoresFromAnswers(merged);
+  for (const [k, v] of Object.entries(scores)) {
+    sessionSet[`goalTracker.${k}`] = v;
+  }
+
+  await BotSession.updateOne({ _id: session._id }, { $set: sessionSet });
+  if (Object.keys(leadSet).length > 0 || Object.keys(scorecardSet).length > 0) {
+    await Lead.updateOne({ _id: leadId }, { $set: { ...leadSet, ...scorecardSet } });
+  }
+}
+
+async function completeFlow(session: BotSessionDocument): Promise<void> {
+  await BotSession.updateOne(
+    { _id: session._id },
+    { $set: { flowCompletedAt: new Date(), currentStep: 'done' } },
+  );
+}
+
+async function updateFreddyMetrics(
+  leadId: string,
+  updates: {
+    totalMessages?: number;
+    passiveScores?: number;
+    directScores?: number;
+    guardrailFails?: number;
+    channelSwitches?: number;
+    outOfScopeCount?: number;
+  },
+): Promise<void> {
   const inc: Record<string, number> = {};
   for (const [k, v] of Object.entries(updates)) {
     if (!v) continue;
     inc[`freddyMetrics.${k}`] = v;
   }
-
   const lead = await Lead.findById(leadId).lean();
   const set: Record<string, unknown> = {
     'freddyMetrics.lastResponseTime': new Date(),
@@ -113,7 +211,6 @@ async function updateFreddyMetrics(leadId: string, updates: {
   if (!lead?.freddyMetrics?.firstResponseTime) {
     set['freddyMetrics.firstResponseTime'] = new Date();
   }
-
   await Lead.updateOne(
     { _id: leadId },
     {
@@ -123,76 +220,32 @@ async function updateFreddyMetrics(leadId: string, updates: {
   );
 }
 
-const EMAIL_RE_SIMPLE = /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/i;
-
-/**
- * Apply the structured data the LLM extracted to the lead and session so the
- * next turn has an up-to-date picture of what we know.
- */
-async function applyExtracted(
+async function handleClose(
   session: BotSessionDocument,
   leadId: string,
-  extracted: LlmExtracted,
-  userText: string,
-): Promise<number> {
-  const sessionSet: Record<string, unknown> = {};
-  const leadSet: Record<string, unknown> = {};
-  let passiveCount = 0;
-
-  if (extracted.name && shouldUpgradeCollectedName(session.collectedName, extracted.name)) {
-    sessionSet.collectedName = extracted.name;
-    sessionSet['goalTracker.has_name'] = true;
-    leadSet.name = extracted.name;
-  }
-  if (extracted.email && EMAIL_RE_SIMPLE.test(extracted.email) && extracted.email !== session.collectedEmail) {
-    sessionSet.collectedEmail = extracted.email;
-    sessionSet['goalTracker.has_email'] = true;
-    leadSet.email = extracted.email;
-  }
-  if (extracted.isInvestor === true) {
-    sessionSet.isInvestor = true;
-  }
-
-  const evidenceSnippet = userText.slice(0, 160);
-  const dims: Array<keyof LlmExtracted> = ['capital', 'experience', 'location', 'commitment', 'timeline'];
-  for (const dim of dims) {
-    const score = extracted[dim];
-    if (typeof score !== 'number') continue;
-    const current = (session.goalTracker as Record<string, unknown> | undefined)?.[`score_${dim}`];
-    if (current != null) continue;
-    sessionSet[`goalTracker.score_${dim}`] = score;
-    sessionSet[`scoringEvidence.${dim}`] = evidenceSnippet;
-    passiveCount += 1;
-  }
-
-  if (Object.keys(sessionSet).length > 0) {
-    await BotSession.updateOne({ _id: session._id }, { $set: sessionSet });
-  }
-  if (Object.keys(leadSet).length > 0) {
-    await Lead.updateOne({ _id: leadId }, { $set: leadSet });
-  }
-  return passiveCount;
-}
-
-/**
- * Map the LLM's intent/action to a HandlerResult so the downstream channel
- * router (book call, voice switch, escalation etc.) behaves the same whether
- * the decision came from the LLM or the deterministic brain.
- */
-function toHandlerResult(intent: FreddyIntent, action: LlmAction): HandlerResult {
-  switch (action) {
-    case 'book_call':
-      return { action: 'book_call', note: `LLM: book_call (intent=${intent})` };
-    case 'switch_to_voice':
-      return { action: 'switch_to_voice', data: { immediate: true }, note: 'LLM: user prefers voice' };
-    case 'switch_to_email':
-      return { action: 'switch_to_email', note: 'LLM: user prefers email' };
-    case 'escalate':
-      return { action: 'contact_team', note: `LLM: escalate to human (intent=${intent})` };
-    case 'opt_out':
-      return { action: 'opt_out', note: 'LLM: lead opted out' };
-    default:
-      return { action: 'respond', note: `LLM: respond (intent=${intent})` };
+  choice: FlowAnswers['closeChoice'],
+  latestUserText: string,
+): Promise<void> {
+  const { calendlyLink } = await getCrmSettings();
+  const bookingLink = calendlyLink || 'https://cal.com/franchise-ready/discovery';
+  if (choice === 'send_link') {
+    await sendText(session.phone, `Here is the Discovery Call link: ${bookingLink}`);
+  } else if (choice === 'call_me') {
+    await sendText(
+      session.phone,
+      `Perfect — you will get a call from the Franchise Ready team in the next 2 minutes.`,
+    );
+    await enqueueVoiceAgentCall({
+      leadId,
+      phone: session.phone,
+      name: session.collectedName ?? 'there',
+      reason: `close_booking_call | latest=${latestUserText.slice(0, 120)}`,
+    });
+  } else {
+    await sendText(
+      session.phone,
+      `No problem. Whenever you are ready, just message me here and I will share the Discovery Call link.`,
+    );
   }
 }
 
@@ -200,16 +253,22 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
   const phone = formatPhone(input.from);
   const text = inboundText(input);
   if (!text) return;
+
   const v2EnabledForLead = isFreddyV2EnabledForPhone(phone);
-  console.log(`[freddy] inbound phone=${phone} text=${JSON.stringify(text)} v2=${v2EnabledForLead}`);
+  const replyId = inboundReplyId(input);
+  console.log(
+    `[freddy] inbound phone=${phone} text=${JSON.stringify(text)} replyId=${replyId ?? 'none'} v2=${v2EnabledForLead}`,
+  );
 
   const lead = await ensureLead(phone, input.profileName);
   const session = await ensureSession(lead, phone);
+
   if (input.profileName && shouldUpgradeCollectedName(session.collectedName, input.profileName)) {
     session.collectedName = input.profileName.trim();
     session.goalTracker = { ...(session.goalTracker ?? {}), has_name: true };
     await session.save();
   }
+
   if (session.optedOut) {
     console.log(`[freddy] skipped (optedOut) phone=${phone}`);
     return;
@@ -224,134 +283,176 @@ export async function processFreddyMessage(input: InboundMessageInput): Promise<
     return;
   }
 
-  await appendConversation(session, { role: 'user', text });
+  await appendUser(session, text);
 
-  // Load the full conversation so the LLM can see the last N turns.
+  let currentStep = getCurrentStep(session);
+  console.log(`[freddy] step=${currentStep}`);
+
+  // ---- Fast path: the user tapped a button / list row ---------------------
+  let structuredAnswer: Partial<FlowAnswers> | null = null;
+  if (replyId) {
+    structuredAnswer = parseButtonReply(currentStep, replyId);
+  }
+
+  // ---- LLM pass (primary brain) -------------------------------------------
+  let sideReply = '';
+  let sideIntent: FreddyIntent | null = null;
+  let action: 'respond' | 'book_call' | 'switch_to_voice' | 'switch_to_email' | 'escalate' | 'opt_out' = 'respond';
+  let brain: 'llm' | 'deterministic' = 'deterministic';
+
   const conversation = session.conversationId
     ? await Conversation.findById(session.conversationId).lean()
     : null;
 
-  const missingGoalsPre = getMissingGoals(session);
-  const suggestedNextQuestion = getNextQuestion(session, missingGoalsPre);
-
-  let intent: FreddyIntent = 'out_of_scope';
-  let handlerResult: HandlerResult = { action: 'respond', note: 'default' };
-  let replyText = '';
-  let guardrailFailed = false;
-  let passiveSignalCount = 0;
-  let brain: 'llm' | 'deterministic' = 'deterministic';
-  let questionAsked: string | null = null;
-
-  // --- PRIMARY PATH: LLM brain ---------------------------------------------
-  if (isLlmBrainEnabled()) {
+  if (isLlmBrainEnabled() && currentStep !== 'done') {
     const decision = await decideWithLlm({
       session,
       conversation,
       latestUserText: text,
-      missingGoals: missingGoalsPre,
-      suggestedNextQuestion,
+      currentStep,
       previousAssistantReply: session.lastAssistantText ?? null,
     });
     if (decision) {
       brain = 'llm';
-      intent = decision.intent;
-      handlerResult = toHandlerResult(intent, decision.action);
-      passiveSignalCount = await applyExtracted(session, lead._id, decision.extracted, text);
-      if (decision.action === 'opt_out') {
-        await BotSession.updateOne({ _id: session._id }, { $set: { optedOut: true } });
+      sideReply = decision.sideReply;
+      sideIntent = decision.sideIntent;
+      action = decision.action;
+      if (!structuredAnswer && decision.userAnsweredCurrentStep && decision.stepAnswer) {
+        structuredAnswer = decision.stepAnswer;
       }
-      const checked = await guardrailCheck(decision.reply);
-      replyText = checked.safeReply;
-      guardrailFailed = checked.failed;
-      // If the reply ends with a question, stash it for loop detection.
-      questionAsked = /\?\s*$/.test(replyText) ? replyText.split(/[.!]/).slice(-1)[0].trim() : null;
-    } else {
-      console.warn('[freddy:llm] decision was null — falling back to deterministic brain');
     }
   }
 
-  // --- FALLBACK PATH: deterministic brain ---------------------------------
+  // ---- Deterministic fallback / supplement --------------------------------
+  if (!structuredAnswer) {
+    structuredAnswer = parseTextForStep(currentStep, text);
+  }
   if (brain === 'deterministic') {
-    intent = classifyIntent(text);
-    handlerResult = await routeToHandler(session, intent, text);
-
-    if (looksLikePassiveScoringSignal(text.toLowerCase())) {
-      const extracted = await passiveScoreExtractor(text);
-      if (extracted) {
-        const set: Record<string, unknown> = {};
-        for (const [dimension, score] of Object.entries(extracted)) {
-          set[`goalTracker.score_${dimension}`] = score;
-          set[`scoringEvidence.${dimension}`] = text.slice(0, 120);
-        }
-        await BotSession.updateOne({ _id: session._id }, { $set: set });
-        passiveSignalCount = Object.keys(extracted).length;
-      }
-    }
-
-    const freshSession = (await BotSession.findById(session._id).exec()) ?? session;
-    const missingGoals = getMissingGoals(freshSession);
-    const nextQuestion = getNextQuestion(freshSession, missingGoals);
-    const reply = await generateReply({
-      session: freshSession,
-      intent,
-      missingGoals,
-      nextQuestion,
-      handlerResult,
-      userText: text,
-    });
-    replyText = reply.text;
-    guardrailFailed = reply.guardrailFailed;
-    questionAsked = reply.questionAsked;
+    sideIntent = classifyIntent(text);
   }
 
-  const freshSession = (await BotSession.findById(session._id).exec()) ?? session;
-  const { calendlyLink } = await getCrmSettings();
-  const bookingLink = calendlyLink || 'https://cal.com/franchise-ready/discovery';
-  console.log(
-    `[freddy] reply phone=${phone} brain=${brain} intent=${intent} action=${handlerResult.action} passiveScores=${passiveSignalCount} text=${JSON.stringify(replyText)}`,
-  );
-  await dispatchChannelAction({
-    session: freshSession,
-    handlerResult,
-    replyText,
-    latestUserMessage: text,
-    bookingLink,
-  });
+  // ---- Side-intent side-effects that SHORT-CIRCUIT the flow --------------
+  if (action === 'opt_out' || sideIntent === 'opt_out') {
+    await BotSession.updateOne({ _id: session._id }, { $set: { optedOut: true } });
+    await sendText(phone, 'Understood. You have been opted out from further messages.');
+    await appendAssistant(session, 'Opted out.', 'opt_out');
+    return;
+  }
 
-  await appendConversation(freshSession, {
-    role: 'assistant',
-    text: replyText,
-    intent,
-    scoringSignal: passiveSignalCount > 0 ? `passive:${passiveSignalCount}` : undefined,
-  });
+  if (action === 'switch_to_voice' || sideIntent === 'prefer_voice') {
+    await sendText(phone, 'Perfect — you will get a call from the Franchise Ready team in the next 2 minutes.');
+    await enqueueVoiceAgentCall({
+      leadId: lead._id,
+      phone,
+      name: session.collectedName ?? 'there',
+      reason: `voice_request_mid_flow | step=${currentStep} | latest=${text.slice(0, 120)}`,
+    });
+    await appendAssistant(session, 'Voice call queued.', 'prefer_voice');
+    await updateFreddyMetrics(lead._id, { totalMessages: 1, channelSwitches: 1 });
+    return;
+  }
 
-  const previousQuestion = (freshSession.lastQuestionAsked ?? '').trim();
-  const askedNow = (questionAsked ?? '').trim();
-  const isRepeatedQuestion = Boolean(askedNow) && askedNow === previousQuestion;
-  const nextRepeatCount = isRepeatedQuestion ? (freshSession.repeatCount ?? 0) + 1 : 0;
+  if (action === 'escalate' || sideIntent === 'frustration_signal') {
+    const msg = sideReply
+      || "That is a fair call. Let me get a human from the team to take over quickly — someone will reach out shortly.";
+    await sendText(phone, msg);
+    await appendAssistant(session, msg, 'frustration_signal');
+    await Lead.updateOne(
+      { _id: lead._id },
+      {
+        $set: {
+          lastActivityType: 'freddy_frustration_signal',
+          lastActivity: new Date().toISOString(),
+        },
+      },
+    );
+    await updateFreddyMetrics(lead._id, { totalMessages: 1 });
+    return;
+  }
+
+  // ---- Persist step answer, advance ---------------------------------------
+  let advanced = false;
+  if (structuredAnswer) {
+    await applyFlowAnswer(session, lead._id, structuredAnswer);
+    advanced = true;
+  }
+
+  // Reload session so flow state is fresh.
+  const fresh = (await BotSession.findById(session._id).exec()) ?? session;
+  const stepBefore = currentStep;
+  const stepAfter = getCurrentStep(fresh);
+
+  // Handle close_booking special transition when the user picks an option.
+  if (stepBefore === 'close_booking' && structuredAnswer?.closeChoice) {
+    await handleClose(fresh, lead._id, structuredAnswer.closeChoice, text);
+    await appendAssistant(fresh, `Close choice: ${structuredAnswer.closeChoice}`, 'confirm_booking');
+    await completeFlow(fresh);
+    await updateFreddyMetrics(lead._id, { totalMessages: 1 });
+    return;
+  }
+
+  // ---- Build outgoing messages -------------------------------------------
+  const messagesToSend: { kind: 'text' | 'prompt'; payload: string | Prompt }[] = [];
+
+  // 1. Side reply (if the LLM had anything to say about a side topic).
+  if (sideReply) {
+    const checked = await guardrailCheck(sideReply);
+    if (checked.safeReply) {
+      messagesToSend.push({ kind: 'text', payload: checked.safeReply });
+    }
+  } else if (advanced) {
+    // Short native acknowledgement for stuff like "got it, <email>".
+    const ack = acknowledgement(stepBefore, fresh.flowAnswers as FlowAnswers, fresh);
+    if (ack) messagesToSend.push({ kind: 'text', payload: ack });
+  }
+
+  // 2. Next step's prompt (or close message if flow is done).
+  if (stepAfter === 'done') {
+    // Flow finished but close_booking didn't fire — safety net.
+    const closeText =
+      'Thank you for sharing all that. Based on what you told me, a short Discovery Call with Rahul is the right next step. Want me to share the link?';
+    messagesToSend.push({ kind: 'text', payload: closeText });
+  } else {
+    const prompt = renderPrompt(stepAfter, fresh);
+    if (prompt) messagesToSend.push({ kind: 'prompt', payload: prompt });
+  }
+
+  // ---- Dispatch -----------------------------------------------------------
+  for (const m of messagesToSend) {
+    if (m.kind === 'text') {
+      await sendText(phone, m.payload as string);
+      await appendAssistant(fresh, m.payload as string, sideIntent ?? 'respond');
+    } else {
+      const p = m.payload as Prompt;
+      await sendPrompt(phone, p);
+      await appendAssistant(fresh, promptToTranscript(p), `flow:${stepAfter}`);
+    }
+  }
+
+  const lastAssistantText = messagesToSend
+    .map((m) => (m.kind === 'text' ? (m.payload as string) : promptToTranscript(m.payload as Prompt)))
+    .join(' ');
 
   await BotSession.updateOne(
-    { _id: freshSession._id },
+    { _id: fresh._id },
     {
       $set: {
-        lastIntent: intent,
+        lastIntent: sideIntent ?? `flow:${stepAfter}`,
         lastIntentAt: new Date(),
         lastMessageAt: new Date(),
-        lastQuestionAsked: askedNow || null,
-        lastQuestionSentAt: askedNow ? new Date() : freshSession.lastQuestionSentAt,
-        lastAssistantText: replyText,
-        repeatCount: nextRepeatCount,
+        lastAssistantText,
+        currentStep: stepAfter,
       },
     },
   );
 
+  console.log(
+    `[freddy] reply phone=${phone} brain=${brain} stepBefore=${stepBefore} stepAfter=${stepAfter} advanced=${advanced} sideIntent=${sideIntent ?? 'none'} action=${action}`,
+  );
+
   await updateFreddyMetrics(lead._id, {
     totalMessages: 1,
-    passiveScores: passiveSignalCount,
-    guardrailFails: guardrailFailed ? 1 : 0,
-    channelSwitches:
-      handlerResult.action === 'switch_to_voice' || handlerResult.action === 'switch_to_email' ? 1 : 0,
-    outOfScopeCount: intent === 'out_of_scope' ? 1 : 0,
+    outOfScopeCount: sideIntent === 'out_of_scope' ? 1 : 0,
   });
 }
 
