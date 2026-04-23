@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 .env
+
+# Next.js build artefacts — regenerated on every build
+crm/.next/
+crm/tsconfig.tsbuildinfo
 # Google OAuth client JSON downloads (never commit)
 client_secret*.json
 

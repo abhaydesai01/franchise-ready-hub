@@ -1,9 +1,0 @@
-{
-  "/_not-found/page": "app/_not-found/page.js",
-  "/api/webhooks/whatsapp/route": "app/api/webhooks/whatsapp/route.js",
-  "/api/leads/[id]/whatsapp/route": "app/api/leads/[id]/whatsapp/route.js",
-  "/api/webhooks/calendly/route": "app/api/webhooks/calendly/route.js",
-  "/page": "app/page.js",
-  "/api/webhooks/meta/route": "app/api/webhooks/meta/route.js",
-  "/api/whatsapp/send/route": "app/api/whatsapp/send/route.js"
-}
